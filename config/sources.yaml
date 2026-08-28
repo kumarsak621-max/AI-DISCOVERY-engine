@@ -1,0 +1,39 @@
+sources:
+  # Subreddit RSS is a public feed. Fetched only if robots.txt allows the path.
+  - name: reddit_rss_india
+    type: rss
+    enabled: true
+    url: "https://www.reddit.com/r/india/.rss"
+    rate_limit_seconds: 2.0
+    query: "r/india"
+    require_keywords:
+      - myntra
+      - wishlist
+      - ajio
+      - nykaa
+      - meesho
+      - "online shop"
+      - "size chart"
+
+  - name: reddit_rss_indian_fashion
+    type: rss
+    enabled: true
+    url: "https://www.reddit.com/r/IndianFashionAddicts/.rss"
+    rate_limit_seconds: 2.0
+    query: "IndianFashionAddicts"
+
+  - name: reddit_rss_myntra_search
+    type: rss
+    enabled: true
+    url: "https://www.reddit.com/search.rss?q=Myntra+wishlist&sort=new&t=month"
+    rate_limit_seconds: 2.0
+    query: "Myntra wishlist"
+
+  - name: reddit_rss_online_fashion
+    type: rss
+    enabled: true
+    url: "https://www.reddit.com/search.rss?q=online+fashion+shopping+India&sort=new&t=month"
+    rate_limit_seconds: 2.0
+    query: "online fashion shopping India"
+
+html_sources: []

@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: myntra-discovery-engine
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port=$PORT --server.address=0.0.0.0
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: openai/gpt-4o-mini
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: CRON_SECRET
+        sync: false
+      - key: SKIP_AUTO_COLLECTION
+        value: "0"

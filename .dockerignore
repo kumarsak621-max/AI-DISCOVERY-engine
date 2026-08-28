@@ -1,0 +1,15 @@
+.venv
+venv
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+data/*.db
+data/*.sqlite
+__pycache__
+.pytest_cache
+.mypy_cache
+*.pyc
+.idea
+.vscode
