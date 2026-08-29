@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from analytics.metrics import kpi_counts
+from analytics.opportunities import multiplicative_framework_score
 from config import OPPORTUNITY_WEIGHTS
 from dashboard.ui import empty_state
 
@@ -38,7 +39,12 @@ Weights: """
             + ", ".join(f"{k}={v:.0%}" for k, v in OPPORTUNITY_WEIGHTS.items())
             + """
 
-All counts come from the database. Percentages are of relevant analyzed public conversations.
+A second comparable score is also shown:
+
+**Framework score** = Frequency share × Purchase relevance × User impact × Evidence strength  
+(normalized 0–100 across opportunities in this table).
+
+This is an evidence-based prioritization framework, **not proof of causality**.
 """
         )
 
@@ -46,7 +52,7 @@ All counts come from the database. Percentages are of relevant analyzed public c
         empty_state("No real records were collected from this source during the selected period.")
         return
     if opportunities.empty:
-        empty_state("No opportunities scored yet. Collect real records, then run Analyze 30-Day Data.")
+        empty_state("No opportunities scored yet. Collect real records, then run Analyze Reviews.")
         return
 
     kpis = kpi_counts(conversations, analysis)
@@ -54,6 +60,19 @@ All counts come from the database. Percentages are of relevant analyzed public c
     st.caption(f"Relevant analyzed records in window: **{relevant_n}**")
 
     ranked = opportunities.sort_values("opportunity_score", ascending=False).reset_index(drop=True)
+    raw_scores = []
+    for _, row in ranked.iterrows():
+        evidence_n = int(row.get("evidence_count") or 0)
+        raw_scores.append(
+            multiplicative_framework_score(
+                evidence_n,
+                relevant_n,
+                float(row.get("conversion_relevance_score") or 0),
+                float(row.get("severity_score") or 0),
+                evidence_n,
+            )
+        )
+    peak = max(raw_scores) if raw_scores and max(raw_scores) > 0 else 1.0
     rows = []
     for i, row in ranked.iterrows():
         evidence_n = int(row.get("evidence_count") or 0)
@@ -65,18 +84,21 @@ All counts come from the database. Percentages are of relevant analyzed public c
             impact = "Medium/High"
         else:
             impact = "Medium"
+        framework = round(100.0 * raw_scores[int(i)] / peak, 1)
         rows.append(
             {
                 "Rank": int(i) + 1,
                 "Opportunity": row.get("opportunity_name"),
-                "Frequency (records)": evidence_n,
-                "% of relevant records": share,
-                "User impact (purchase relevance)": impact,
-                "Purchase relevance score": round(conv, 1),
+                "User problem": row.get("problem_statement"),
+                "Frequency": evidence_n,
+                "Percentage": share,
+                "Purchase relevance": round(conv, 1),
+                "User impact": impact,
                 "Evidence count": evidence_n,
+                "Sources": row.get("user_segment"),
                 "Confidence": round(float(row.get("confidence_score") or 0), 1),
-                "Opportunity score": row.get("opportunity_score"),
-                "Segment": row.get("user_segment"),
+                "Weighted score": row.get("opportunity_score"),
+                "Framework score (normalized)": framework,
             }
         )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)

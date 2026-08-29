@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from ai.analyzer import ConversationAnalyzer
 from ai.clustering import cluster_and_store
-from ai.openrouter import OpenRouterClient
+from ai.provider import get_llm_client, missing_key_message, provider_display_name
 from analytics.brief import render_research_brief
 from analytics.metrics import (
     build_discovery_summary,
@@ -22,16 +22,17 @@ from analytics.metrics import (
     load_opportunities_frame,
 )
 from analytics.opportunities import build_opportunities
+from collectors.apify_reddit import ApifyRedditCollector
 from collectors.app_store import AppStoreCollector
 from collectors.google_play import GooglePlayCollector
 from collectors.reddit import RedditCollector
 from collectors.web_scraper import WebCollector
 from collectors.youtube import YouTubeCollector
-from config import DISCOVERY_QUERIES, YOUTUBE_QUERIES
+from config import APIFY_REDDIT_QUERIES, DISCOVERY_QUERIES, YOUTUBE_QUERIES
 from database.models import CollectionRun, Conversation, DiscoveryRun
 from pipeline.state import DbSourceStateStore
 from processing.cleaning import is_valid_conversation, normalize_record
-from processing.dates import in_research_window, utcnow, window_bounds
+from processing.dates import in_bounds, resolve_window, utcnow, window_bounds
 from processing.deduplication import deduplicate_records, flag_syndicated
 from processing.language import detect_language
 
@@ -41,6 +42,7 @@ ProgressCb = Callable[[str, float], None]
 
 COLLECTOR_FACTORIES = {
     "reddit": RedditCollector,
+    "apify_reddit": ApifyRedditCollector,
     "youtube": YouTubeCollector,
     "web": WebCollector,
     "google_play": GooglePlayCollector,
@@ -160,6 +162,10 @@ def collect_source(
     }
     if source_name == "reddit":
         kwargs["queries"] = list(DISCOVERY_QUERIES) + (extra_queries or [])
+    elif source_name == "apify_reddit":
+        kwargs["queries"] = list(APIFY_REDDIT_QUERIES) + (extra_queries or [])
+        kwargs["api_token"] = os.getenv("APIFY_API_TOKEN", "")
+        kwargs["actor_id"] = os.getenv("APIFY_REDDIT_ACTOR_ID", "")
     elif source_name == "youtube":
         kwargs["queries"] = list(YOUTUBE_QUERIES)
         kwargs["api_key"] = os.getenv("YOUTUBE_API_KEY", "")
@@ -173,6 +179,14 @@ def collect_source(
         run.status = "unavailable"
         run.error_message = reason
         run.completed_at = utcnow()
+        run._coverage = {  # type: ignore[attr-defined]
+            "requested_start": str(since or ""),
+            "requested_end": str(until or ""),
+            "earliest_record": "",
+            "latest_record": "",
+            "limitation": reason,
+            "requested_records": 0,
+        }
         store.set_status(source_name, status="unavailable", error=reason)
         session.commit()
         return [], run
@@ -180,6 +194,9 @@ def collect_source(
     records, failed = collector.collect()
     run.records_found = len(records)
     run.records_failed = failed
+    requested = int(getattr(collector, "requested_records", 0) or 0)
+    if hasattr(run, "requested_records"):
+        run.requested_records = requested
     if collector.status == "error":
         run.status = "error"
         run.error_message = collector.last_error
@@ -210,6 +227,14 @@ def collect_source(
             failed=failed,
         )
     run.completed_at = utcnow()
+    run._coverage = {  # type: ignore[attr-defined]
+        "requested_start": str(getattr(collector, "requested_start", None) or since or ""),
+        "requested_end": str(getattr(collector, "requested_end", None) or until or ""),
+        "earliest_record": str(getattr(collector, "earliest_published", None) or ""),
+        "latest_record": str(getattr(collector, "latest_published", None) or ""),
+        "limitation": getattr(collector, "limitation_note", "") or "",
+        "requested_records": int(getattr(collector, "requested_records", 0) or 0),
+    }
     session.commit()
     return records, run
 
@@ -221,31 +246,50 @@ def analyze_window(
     model: str,
     temperature: float,
     window_days: int = 30,
+    window_months: int | None = None,
+    range_start: datetime | None = None,
+    range_end: datetime | None = None,
+    provider: str = "openrouter",
+    gemini_key: str = "",
     progress: ProgressCb | None = None,
     discovery_run: DiscoveryRun | None = None,
 ) -> dict[str, Any]:
     """Analyze stored records in the publication-date window. Does not collect or invent reviews."""
-    start, end = window_bounds(window_days)
-    client = OpenRouterClient(api_key=api_key, model=model, temperature=temperature)
+    start, end = resolve_window(
+        days=window_days,
+        months=window_months,
+        range_start=range_start,
+        range_end=range_end,
+    )
+    client = get_llm_client(
+        provider,
+        openrouter_key=api_key,
+        gemini_key=gemini_key,
+        model=model,
+        temperature=temperature,
+    )
+    used_provider = provider_display_name(provider)
     if not client.is_configured:
         return {
             "status": "error",
-            "error": "OPENROUTER_API_KEY is not set",
+            "error": missing_key_message(provider),
             "analyzed": 0,
             "failed": 0,
             "pending": 0,
             "already_labeled": 0,
+            "ai_provider": used_provider,
+            "ai_model": getattr(client, "model", model),
+            "dataset_start": start.date().isoformat(),
+            "dataset_end": end.date().isoformat(),
         }
-    _emit(progress, "AI analysis", 0.2)
+    _emit(progress, f"AI analysis ({used_provider})", 0.2)
     pending = (
         session.query(Conversation)
         .filter(Conversation.analysis_status.in_(["pending", "failed"]))
         .all()
     )
     pending = [
-        c
-        for c in pending
-        if c.published_at is None or in_research_window(c.published_at, window_days, now=end)
+        c for c in pending if c.published_at is None or in_bounds(c.published_at, start, end)
     ]
     analyzer = ConversationAnalyzer(client)
     analyzed, failed = analyzer.analyze_batch(session, pending)
@@ -262,17 +306,31 @@ def analyze_window(
     cluster_and_store(session, analyses, llm_client=client)
     _emit(progress, "Opportunity scoring", 0.85)
     build_opportunities(session, analyses)
-    conv_df = load_conversations_frame(session, window_days=window_days)
-    analysis_df = load_analysis_frame(session, window_days=window_days)
+    span_days = max(1, int((end - start).days))
+    conv_df = load_conversations_frame(session, window_days=span_days, range_start=start, range_end=end)
+    analysis_df = load_analysis_frame(session, window_days=span_days, range_start=start, range_end=end)
     opp_df = load_opportunities_frame(session)
     summary = build_discovery_summary(conv_df, analysis_df, opp_df)
-    brief = render_research_brief(summary, window_days=window_days)
+    audit = {
+        "ai_provider": used_provider,
+        "ai_model": getattr(client, "model", model),
+        "analysis_date": utcnow().isoformat(),
+        "dataset_start": start.date().isoformat(),
+        "dataset_end": end.date().isoformat(),
+        "records_analyzed": analyzed,
+        "records_in_window": int(len(windowed)),
+        "already_labeled": len(analyses),
+    }
+    summary["audit"] = audit
+    brief = render_research_brief(summary, window_days=span_days)
     target = discovery_run or latest_run(session)
     if target:
         if analyzed:
             target.last_ai_success_at = utcnow()
         target.conversations_analyzed = analyzed
         target.relevant_count = int(summary["kpis"].get("relevant") or 0)
+        target.ai_provider = used_provider
+        target.ai_model = str(getattr(client, "model", model) or "")
         target.summary_json = json.dumps(summary)
         target.brief_markdown = brief
         session.commit()
@@ -284,6 +342,7 @@ def analyze_window(
         "failed": failed,
         "pending": len(pending),
         "already_labeled": len(analyses),
+        **audit,
     }
 
 
@@ -299,6 +358,8 @@ def run_discovery(
     full_refresh: bool = False,
     extra_queries: list[str] | None = None,
     progress: ProgressCb | None = None,
+    provider: str = "openrouter",
+    gemini_key: str = "",
 ) -> DiscoveryRun:
     start, end = window_bounds(window_days)
     run = DiscoveryRun(
@@ -314,13 +375,21 @@ def run_discovery(
         store = DbSourceStateStore(session)
         all_raw: list[dict[str, Any]] = []
         source_results: list[dict[str, Any]] = []
-        sources = enabled_sources or ["reddit", "youtube", "web", "app_store", "google_play"]
+        sources = enabled_sources or [
+            "reddit",
+            "apify_reddit",
+            "youtube",
+            "web",
+            "app_store",
+            "google_play",
+        ]
         n = max(len(sources), 1)
         for i, source_name in enumerate(sources):
             if source_name not in COLLECTOR_FACTORIES:
                 continue
             label = {
                 "reddit": "Collecting Reddit",
+                "apify_reddit": "Collecting Reddit via Apify",
                 "youtube": "Collecting YouTube",
                 "web": "Collecting public web sources",
                 "google_play": "Collecting Google Play",
@@ -366,15 +435,22 @@ def run_discovery(
                 pub = rec.get("published_at")
                 if pub is None:
                     continue
-                if in_research_window(pub, window_days, now=end):
+                if in_bounds(pub, start, end):
                     in_window.append(rec)
             all_raw.extend(in_window)
+            coverage = getattr(src_run, "_coverage", {}) or {}
             source_results.append(
                 {
                     "source": source_name,
                     "status": src_run.status,
                     "found": len(in_window),
                     "error": src_run.error_message or "",
+                    "requested_start": coverage.get("requested_start") or str(start),
+                    "requested_end": coverage.get("requested_end") or str(end),
+                    "earliest_record": coverage.get("earliest_record") or "",
+                    "latest_record": coverage.get("latest_record") or "",
+                    "limitation": coverage.get("limitation") or "",
+                    "requested_records": coverage.get("requested_records") or 0,
                 }
             )
             if src_run.status == "ok":
@@ -389,7 +465,7 @@ def run_discovery(
         run.conversations_new = len(new_rows)
         run.conversations_duplicate = int(dupes)
         run.records_fetched = len(all_raw)
-        run.source_results = source_results
+        run.source_results_json = json.dumps(source_results)
 
         # Update last collection run duplicate counts
         last_runs = (
@@ -408,6 +484,8 @@ def run_discovery(
             model=model,
             temperature=temperature,
             window_days=window_days,
+            provider=provider,
+            gemini_key=gemini_key,
             progress=progress,
             discovery_run=run,
         )

@@ -40,6 +40,18 @@ def apply_migrations(engine: Engine) -> None:
             statements.append(
                 "ALTER TABLE discovery_runs ADD COLUMN conversations_duplicate INTEGER DEFAULT 0"
             )
+        if "records_fetched" not in run_cols:
+            statements.append("ALTER TABLE discovery_runs ADD COLUMN records_fetched INTEGER DEFAULT 0")
+        if "source_results_json" not in run_cols:
+            statements.append("ALTER TABLE discovery_runs ADD COLUMN source_results_json TEXT DEFAULT '[]'")
+        if "ai_provider" not in run_cols:
+            statements.append("ALTER TABLE discovery_runs ADD COLUMN ai_provider VARCHAR(64) DEFAULT ''")
+        if "ai_model" not in run_cols:
+            statements.append("ALTER TABLE discovery_runs ADD COLUMN ai_model VARCHAR(128) DEFAULT ''")
+    if "collection_runs" in tables:
+        cr_cols = {col["name"] for col in inspector.get_columns("collection_runs")}
+        if "requested_records" not in cr_cols:
+            statements.append("ALTER TABLE collection_runs ADD COLUMN requested_records INTEGER DEFAULT 0")
     if statements:
         with engine.begin() as conn:
             for stmt in statements:

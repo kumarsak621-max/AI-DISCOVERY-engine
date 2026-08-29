@@ -8,8 +8,9 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from ai.openrouter import OpenRouterClient, OpenRouterError
+from ai.openrouter import OpenRouterError
 from ai.prompts import SYSTEM_PROMPT, build_user_prompt
+from ai.provider import AIProviderError
 from ai.schemas import ConversationAnalysis
 from config import HIGH_INTENT_STATUSES, HUMAN_VALIDATION_CONFIDENCE_THRESHOLD
 from database.models import Analysis, Conversation, FailedAnalysis
@@ -94,7 +95,7 @@ def persist_analysis(session: Session, conversation: Conversation, parsed: Conve
 
 
 class ConversationAnalyzer:
-    def __init__(self, client: OpenRouterClient) -> None:
+    def __init__(self, client) -> None:
         self.client = client
 
     def analyze_one(self, conversation: Conversation) -> ConversationAnalysis:
@@ -125,7 +126,7 @@ class ConversationAnalyzer:
                 persist_analysis(session, conversation, parsed)
                 session.commit()
                 ok += 1
-            except OpenRouterError as exc:
+            except (OpenRouterError, AIProviderError) as exc:
                 failed += 1
                 conversation.analysis_status = "failed"
                 conversation.analysis_error = str(exc)[:500]

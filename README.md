@@ -10,28 +10,30 @@ This application collects **real, publicly available** posts, comments, and revi
 
 Public data **cannot prove** actual Myntra wishlist-to-purchase conversion without internal transaction data.
 
-Default research window: **last 30 days**, using **publication date** (not collection date). The window can be set to 7 / 30 / 60 / 90 days.
+Default **collection** window: **last 30 months**, using **publication date** (start = today − 30 months). Dates are computed dynamically.
+
+Default **AI analysis** window: **last 30 days**, matching the wishlist→purchase business metric. The Analyze page also supports 6 / 12 / 30 months and a custom range.
 
 ---
 
 ## Architecture
 
 ```
-Public sources (Reddit, YouTube, web/RSS, App Store, Google Play)
+Public sources (Google Play listing where allowed, YouTube Data API, Reddit, web/RSS, App Store)
         ↓
 Collectors (robots.txt, rate limits, official APIs)
         ↓
-Cleaning + publication-date window
+Cleaning + publication-date window (30 months historical + latest incremental)
         ↓
 Deduplication (source+item_id, content hash, URL)
         ↓
 SQLite (PostgreSQL-compatible schema)
         ↓
-OpenRouter (per-conversation analysis; failures isolated)
+AI provider layer (OpenRouter **or** Gemini — no silent failover)
         ↓
 Theme clustering + Research-Based Opportunity Score
         ↓
-Streamlit dashboard (Part 1 answers + evidence)
+Streamlit dashboard (Review Explorer, Analyze, Opportunities, Metric Decomposition, Ask AI)
 ```
 
 ---
@@ -53,12 +55,12 @@ pip install -r requirements.txt
 Copy `.env.example` to `.env` and fill keys. **Never commit `.env`.**
 
 ```env
-OPENROUTER_API_KEY=your_key
+OPENROUTER_API_KEY=
 OPENROUTER_MODEL=openai/gpt-4o-mini
-REDDIT_CLIENT_ID=
-REDDIT_CLIENT_SECRET=
-REDDIT_USER_AGENT=python:myntra-discovery-engine:v1.0 (by /u/yourname)
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.0-flash
 YOUTUBE_API_KEY=
+AI_PROVIDER=openrouter
 CRON_SECRET=
 ```
 
@@ -68,9 +70,7 @@ Then:
 streamlit run app.py
 ```
 
-The first dashboard page is **Part 1 — AI Discovery Answers**. Percentages are labeled **Percentage of analyzed public conversations**, never as percentages of Myntra users.
-
-On first launch the app shows **Initializing 30-day discovery...** and collects the previous 30 days from configured sources (unless `SKIP_AUTO_COLLECTION=1`).
+On first launch the app shows **Initializing 30-month historical collection...** (unless `SKIP_AUTO_COLLECTION=1`).
 
 ---
 
@@ -78,39 +78,63 @@ On first launch the app shows **Initializing 30-day discovery...** and collects 
 
 | Source | Required? | Notes |
 | --- | --- | --- |
-| **OpenRouter** | Required for AI analysis | Collection still stores records if the key is missing; analysis stays `pending`. |
-| **Reddit** | Strongly recommended | Unauthenticated `search.json` is often HTTP 403. Create a Reddit **script** app. |
-| **YouTube** | Required for YouTube | Official Data API v3. Without `YOUTUBE_API_KEY` the source is **Unavailable** (not faked). |
+| **OpenRouter** | Required if that provider is selected | Collection still stores records if the key is missing; analysis stays `pending`. Missing key message: `OpenRouter API key is not configured.` |
+| **Gemini** | Required if Gemini is selected | Google Generative Language API. Missing key message: `Gemini API key is not configured.` The app does **not** silently switch providers. |
+| **YouTube** | Required for YouTube comments | Official Data API v3. Without `YOUTUBE_API_KEY` the source is **Unavailable** (not faked). |
+| **Reddit (JSON/OAuth)** | Optional | Existing public JSON / OAuth collector is unchanged. Unauthenticated search is often HTTP 403. |
+| **Reddit via Apify** | Required for Apify Reddit | `APIFY_API_TOKEN` + `APIFY_REDDIT_ACTOR_ID`. **Apify is used to collect publicly accessible Reddit data. It is not the official Reddit API.** Missing token: `Apify API token is not configured.` Missing actor: `Apify Reddit Actor is not configured.` A Reddit/Apify failure does not stop Play Store or YouTube. |
 | **Web / RSS** | No key | `config/sources.yaml`. Each URL is checked against `robots.txt`. |
-| **App Store** | No key | Public iTunes customer-review RSS. |
-| **Google Play** | — | No official public reviews API. The collector reports **Unavailable** rather than scraping a JS/anti-bot page. |
+| **App Store** | No key | Public iTunes customer-review RSS. Coverage is whatever Apple's RSS returns (not a guaranteed 30-month dump). |
+| **Google Play** | — | No official public reviews API. The listing HTML is robots-allowed; JSON-LD typically has aggregate rating only. Individual review RPCs are disallowed. The collector reports **Unavailable** rather than scraping blocked endpoints. |
 
 Never commit `.env`. Never paste keys into dashboard logs.
 
 ---
 
-## What a collection run does
+## Reddit via Apify
 
-1. Collect from enabled live sources (incremental using `last_successful_collection_time`, or full 30-day refresh)
-2. Normalize and hash content
-3. Deduplicate (`source + source_item_id`, `content_hash`, URL)
-4. Store new records only
-5. Analyze **new/pending** records with OpenRouter
-6. Cluster themes and score opportunities (Research-Based Opportunity Score)
-7. Refresh the dashboard
+**Apify is used to collect publicly accessible Reddit data. It is not the official Reddit API.**
 
-Failed sources do not crash the run. Failed LLM calls are stored for retry.
+1. Create an Apify account at [apify.com](https://apify.com/).
+2. Create an API token (Console → Settings → Integrations).
+3. Choose a Reddit Actor that collects public posts/comments (for example a public Reddit scraper Actor). Copy its Actor ID (`username/actor-name`).
+4. Put placeholders only in `.env` (never commit real values):
+
+```env
+APIFY_API_TOKEN=
+APIFY_REDDIT_ACTOR_ID=
+# Optional: comma-separated public subreddit names. Use - to skip.
+# APIFY_REDDIT_SUBREDDITS=India,IndianFashionAddicts,IndiaShopping
+```
+
+5. Run **Collect Latest Reviews** (or a 30-month refresh). Play Store and YouTube still run; Reddit/Apify is an extra source.
+6. Open **Review Explorer**, filter **Reddit**, and inspect stored posts/comments.
+7. Run **Analyze Reviews** with Gemini or OpenRouter — Reddit rows use the same AI layer.
+8. Ask the chatbot questions such as “What does Reddit say about Myntra?”
+9. Streamlit Cloud / Render secrets must include `APIFY_API_TOKEN` and `APIFY_REDDIT_ACTOR_ID`.
+
+Search queries live in `config.py` (`APIFY_REDDIT_QUERIES`) and can be extended from the dashboard extra-queries box.
+
+The Actor does **not** guarantee 30 months of Reddit history. The app requests a dynamic window (today − 30 months) and keeps records whose **publication date** falls in that window. Coverage is whatever the Actor actually returned.
 
 ---
 
-## Incremental vs full refresh
+## Historical vs latest collection
 
-- **Run Collection Now** — fetch newly published items since last successful collection (still filtered to the research window).
-- **Full 30-Day Refresh** — rebuild from `NOW-30 days` (or the selected window).
+- **30-month historical** — `Full 30-Month Refresh` or first run. Start date = current date − 30 months. Older stored records are **not** deleted when newer collection runs.
+- **Latest / Collect Latest Reviews** — incremental fetch of newly published public records since last successful collection, still filtered to the 30-month window. This is **not** a continuous real-time stream.
 
 ---
 
-## Automatic collection / scheduled HTTP endpoint
+## Analyze Reviews
+
+Default analysis period is **last 30 days**. Also supports last 6 / 12 / 30 months and a custom publication-date range.
+
+Each analysis result shows an audit trail: AI provider, model, analysis timestamp, dataset range, records analyzed.
+
+---
+
+## Scheduled collection
 
 Streamlit Community Cloud does **not** run a persistent worker. Options:
 
@@ -119,7 +143,8 @@ Streamlit Community Cloud does **not** run a persistent worker. Options:
 
 ```bash
 python -m scheduler.jobs
-python -m scheduler.jobs --full-refresh --window-days 30
+python -m scheduler.jobs --full-refresh --window-months 30
+python -m scheduler.jobs --window-days 30 --provider gemini
 ```
 
 3. **HTTP trigger** for external cron (cron-job.org, EasyCron, GitHub Actions):
@@ -134,9 +159,28 @@ If only Streamlit is running, the same secret works as:
 
 `https://YOUR-APP/?collect=1&token=CRON_SECRET`
 
-`CRON_SECRET` must be set or the trigger is rejected.
-
 Automatic collection is **not** active unless you set an interval **or** configure an external cron.
+
+---
+
+## What a collection run does
+
+1. Collect from enabled live sources (incremental using `last_successful_collection_time`, or full 30-month refresh)
+2. Normalize and hash content
+3. Deduplicate (`source + source_item_id`, `content_hash`, URL)
+4. Store new records only (older rows are kept)
+5. Analyze **new/pending** records with the selected AI provider (OpenRouter or Gemini)
+6. Cluster themes and score opportunities (Research-Based Opportunity Score + framework score)
+7. Refresh the dashboard
+
+Failed sources do not crash the run. Failed LLM calls are stored for retry. The app never silently switches AI providers.
+
+---
+
+## Incremental vs full refresh
+
+- **Collect Latest Reviews** — fetch newly published items since last successful collection (still filtered to the 30-month window).
+- **Full 30-Month Refresh** — rebuild from `NOW − 30 months`.
 
 ---
 
@@ -166,7 +210,11 @@ Covers date/window filtering, hashing, deduplication, JSON parsing, opportunity 
 ```toml
 OPENROUTER_API_KEY = "..."
 OPENROUTER_MODEL = "openai/gpt-4o-mini"
+GEMINI_API_KEY = "..."
+GEMINI_MODEL = "gemini-2.0-flash"
 YOUTUBE_API_KEY = "..."
+APIFY_API_TOKEN = "..."
+APIFY_REDDIT_ACTOR_ID = "..."
 CRON_SECRET = "..."
 ```
 
@@ -176,8 +224,8 @@ CRON_SECRET = "..."
 
 - Build: `pip install -r requirements.txt`
 - Start: `streamlit run app.py --server.port=$PORT --server.address=0.0.0.0`
-- Optional Cron Job: `python -m scheduler.jobs`
-- Set `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, optional Reddit/YouTube keys, `CRON_SECRET`
+- Optional Cron Job: `python -m scheduler.jobs --window-months 30`
+- Set `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `YOUTUBE_API_KEY`, optional Reddit keys, `CRON_SECRET`
 
 ### Docker
 

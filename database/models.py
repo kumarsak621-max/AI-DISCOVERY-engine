@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from sqlalchemy import (
@@ -150,6 +151,7 @@ class CollectionRun(Base):
     records_new: Mapped[int] = mapped_column(Integer, default=0)
     records_duplicate: Mapped[int] = mapped_column(Integer, default=0)
     records_failed: Mapped[int] = mapped_column(Integer, default=0)
+    requested_records: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(32), default="running")
     error_message: Mapped[str] = mapped_column(Text, default="")
 
@@ -192,6 +194,8 @@ class DiscoveryRun(Base):
     conversations_new: Mapped[int] = mapped_column(Integer, default=0)
     conversations_analyzed: Mapped[int] = mapped_column(Integer, default=0)
     conversations_duplicate: Mapped[int] = mapped_column(Integer, default=0)
+    records_fetched: Mapped[int] = mapped_column(Integer, default=0)
+    source_results_json: Mapped[str] = mapped_column(Text, default="[]")
     relevant_count: Mapped[int] = mapped_column(Integer, default=0)
     full_refresh: Mapped[bool] = mapped_column(Boolean, default=False)
     summary_json: Mapped[str] = mapped_column(Text, default="{}")
@@ -199,6 +203,20 @@ class DiscoveryRun(Base):
     status: Mapped[str] = mapped_column(String(32), default="running")
     error: Mapped[str] = mapped_column(Text, default="")
     last_ai_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ai_provider: Mapped[str] = mapped_column(String(64), default="")
+    ai_model: Mapped[str] = mapped_column(String(128), default="")
+
+    @property
+    def source_results(self) -> list:
+        try:
+            parsed = json.loads(self.source_results_json or "[]")
+        except json.JSONDecodeError:
+            return []
+        return parsed if isinstance(parsed, list) else []
+
+    @source_results.setter
+    def source_results(self, value: list | None) -> None:
+        self.source_results_json = json.dumps(value or [])
 
 
 class AppSetting(Base):

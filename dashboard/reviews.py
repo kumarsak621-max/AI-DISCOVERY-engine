@@ -20,7 +20,7 @@ def render(conversations: pd.DataFrame, analysis: pd.DataFrame, window_days: int
 
     records = build_review_records(conversations, analysis)
     counts = source_counts(records)
-    st.markdown(f"**LAST 30 DAYS — Total real records: {counts.get('Total', 0):,}**")
+    st.markdown(f"**Records in explorer frame: {counts.get('Total', 0):,}**")
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Google Play", counts.get("Google Play Store", 0))
     m2.metric("YouTube", counts.get("YouTube", 0))
@@ -38,11 +38,13 @@ def render(conversations: pd.DataFrame, analysis: pd.DataFrame, window_days: int
     with c1:
         preset = st.selectbox(
             "Date preset",
-            ["last_30_days", "today", "all_in_window"],
+            ["last_30_days", "last_6_months", "last_12_months", "last_30_months", "today"],
             format_func=lambda x: {
-                "last_30_days": "Last 30 days",
+                "last_30_days": "Last 30 Days",
+                "last_6_months": "Last 6 Months",
+                "last_12_months": "Last 12 Months",
+                "last_30_months": "Last 30 Months",
                 "today": "Today",
-                "all_in_window": "All in research window",
             }[x],
         )
     with c2:
@@ -83,6 +85,8 @@ def render(conversations: pd.DataFrame, analysis: pd.DataFrame, window_days: int
         langs = sorted({str(x) for x in records["language"].dropna().tolist() if str(x).strip()}) if "language" in records.columns else []
         language = st.multiselect("Language", langs)
 
+    keyword = st.text_input("Keyword search (review/comment text, title, video title)")
+
     view = filter_review_records(
         records,
         preset=preset,
@@ -93,6 +97,7 @@ def render(conversations: pd.DataFrame, analysis: pd.DataFrame, window_days: int
         rating=rating or None,
         language=language or None,
         segment=segment or None,
+        keyword=keyword,
     )
     st.metric("Matching real records", int(len(view)))
     if view.empty:

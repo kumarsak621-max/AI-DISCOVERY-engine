@@ -49,9 +49,9 @@ def render(
 
     b1, b2 = st.columns(2)
     with b1:
-        collect = st.button("Collect Latest Reviews", type="primary", use_container_width=True)
+        collect = st.button("Collect Latest Reviews", type="primary", use_container_width=True, key="collection_collect_latest")
     with b2:
-        analyze = st.button("Analyze 30-Day Data", use_container_width=True)
+        analyze = st.button("Analyze Reviews", use_container_width=True, key="collection_analyze_reviews")
     st.caption("If a source has no new public items, the count will be zero. Fake reviews are never generated.")
 
     st.markdown("#### Source health")

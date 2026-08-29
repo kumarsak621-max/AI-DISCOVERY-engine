@@ -17,9 +17,18 @@ DEFAULT_DB_PATH = os.getenv("DATABASE_PATH", str(DATA_DIR / "discovery.db"))
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+DEFAULT_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 DEFAULT_TEMPERATURE = 0.1
 DEFAULT_MAX_RECORDS = 200
 DEFAULT_RESEARCH_WINDOW_DAYS = 30
+HISTORICAL_WINDOW_MONTHS = 30
+
+WINDOW_PRESETS: dict[str, dict[str, int]] = {
+    "Last 30 days": {"days": 30},
+    "Last 6 months": {"months": 6},
+    "Last 12 months": {"months": 12},
+    "Last 30 months": {"months": 30},
+}
 REQUEST_TIMEOUT_SECONDS = 60
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 2.0
@@ -99,18 +108,56 @@ FASHION_QUERIES: list[str] = [
 ]
 
 YOUTUBE_QUERIES: list[str] = [
-    "Myntra reviews",
-    "Myntra haul",
+    "Myntra review",
     "Myntra shopping",
     "Myntra fashion",
+    "Myntra haul",
     "Myntra shopping experience",
-    "Myntra sizing",
-    "Myntra try on",
-    "Myntra outfit review",
+    "Myntra problems",
+    "Myntra quality",
+    "Myntra size",
+    "Myntra fitting",
+    "Myntra return",
+    "Myntra delivery",
     "Myntra wishlist",
-    "fashion shopping problems",
-    "online fashion purchase uncertainty",
-    "online fashion shopping India",
+    "online fashion shopping problems",
+    "online fashion fit problems",
+    "online fashion size problems",
+    "online fashion purchase experience",
+]
+
+# Configurable Apify Reddit search terms (not the official Reddit API).
+APIFY_REDDIT_QUERIES: list[str] = [
+    "Myntra",
+    "Myntra review",
+    "Myntra shopping",
+    "Myntra problems",
+    "Myntra experience",
+    "Myntra quality",
+    "Myntra size",
+    "Myntra fitting",
+    "Myntra fit",
+    "Myntra return",
+    "Myntra delivery",
+    "Myntra refund",
+    "Myntra wishlist",
+    "Myntra wishlist purchase",
+    "Myntra fashion",
+    "Myntra clothes",
+    "Myntra alternatives",
+    "online fashion shopping",
+    "online fashion size",
+    "online fashion fit",
+    "online fashion purchase",
+    "online shopping fashion problems",
+]
+
+# Public community names only. Override with APIFY_REDDIT_SUBREDDITS (comma-separated).
+# Empty means search-only; do not assume a subreddit exists.
+DEFAULT_APIFY_REDDIT_SUBREDDITS: list[str] = [
+    "India",
+    "IndianFashionAddicts",
+    "IndiaShopping",
 ]
 
 DISCOVERY_QUERIES: list[str] = MYNTRA_QUERIES + FASHION_QUERIES

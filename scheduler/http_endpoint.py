@@ -40,9 +40,13 @@ def _authorized(token: str) -> bool:
 
 
 def run_collection_job() -> dict:
+    from processing.dates import days_covering_months
     from scheduler.jobs import run_job
 
-    run_job(full_refresh=False, window_days=int(os.getenv("RESEARCH_WINDOW_DAYS", "30")))
+    window_days = int(os.getenv("RESEARCH_WINDOW_DAYS", "0") or 0)
+    if window_days <= 0:
+        window_days = days_covering_months(int(os.getenv("HISTORICAL_WINDOW_MONTHS", "30")))
+    run_job(full_refresh=False, window_days=window_days)
     return {"ok": True, "status": "collection started and completed"}
 
 

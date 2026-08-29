@@ -24,6 +24,10 @@ EXAMPLES = [
     "Which problem has the strongest evidence?",
     "Which source reports the most fit-related complaints?",
     "Compare Play Store and YouTube complaints.",
+    "What does Reddit say about Myntra?",
+    "What are the biggest Reddit complaints?",
+    "Which problems appear across Play Store, YouTube and Reddit?",
+    "Which opportunities have evidence across multiple sources?",
     "Show evidence for the biggest opportunity.",
 ]
 
@@ -35,11 +39,14 @@ def render(
     api_key: str,
     model: str,
     window_days: int,
+    provider: str = "openrouter",
+    gemini_key: str = "",
 ) -> None:
     st.subheader("Ask AI")
     st.caption(
         "Answers are retrieved from this application's collected public conversations, "
-        "then summarized with OpenRouter. This is not a generic fashion chatbot."
+        "then summarized with the selected AI provider. This is not a generic fashion chatbot. "
+        "Quotations are taken only from stored records."
     )
     period = analysis_period_label(int(window_days))
     st.markdown(f"**{period}**")
@@ -49,8 +56,10 @@ def render(
         empty_state("No real reviews were collected for this period.")
         return
 
-    if not api_key.strip():
-        st.error("OPENROUTER_API_KEY is not configured. Retrieval still works; the model cannot generate an answer.")
+    if provider.lower() == "gemini" and not gemini_key.strip():
+        st.error("Gemini API key is not configured.")
+    elif provider.lower() != "gemini" and not api_key.strip():
+        st.error("OpenRouter API key is not configured.")
 
     choice = st.selectbox("Example questions", ["(type your own)"] + EXAMPLES)
     if "ask_q" not in st.session_state:
@@ -67,13 +76,15 @@ def render(
         st.warning("Enter a question.")
         return
 
-    with st.spinner("Retrieving stored records and asking OpenRouter…"):
+    with st.spinner("Retrieving stored records and asking the selected AI provider…"):
         result = answer_question(
             question.strip(),
             records,
             api_key=api_key.strip(),
             model=model,
             period_label=period,
+            provider=provider,
+            gemini_key=gemini_key.strip(),
         )
 
     st.markdown("### DIRECT ANSWER")
@@ -99,14 +110,19 @@ def render(
         url = item.get("url") or ""
         link = f" — [Open Original Source]({url})" if url else ""
         st.markdown(f"{item['n']}. “{item['quote']}”")
-        st.caption(f"Source: {item['source']} · Date: {item['date']}{link}")
+        sub = f" · Subreddit: {item['subreddit']}" if item.get("subreddit") else ""
+        st.caption(f"Source: {item['source']}{sub} · Date: {item['date']}{link}")
+        st.caption("Observed evidence above is stored text. AI interpretation is separate.")
 
-    st.markdown("### SOURCE BREAKDOWN")
+    st.markdown("### SOURCE COMPARISON")
     breakdown = result.get("source_breakdown") or {}
     if breakdown:
         st.write(", ".join(f"{k}: {v}" for k, v in breakdown.items()))
     else:
         st.write("—")
+
+    st.markdown("### POTENTIAL BUSINESS IMPLICATION")
+    st.write(result.get("business_implication") or "—")
 
     st.markdown("### DATE RANGE")
     st.write(result.get("period") or "—")
@@ -114,4 +130,7 @@ def render(
     st.write(result.get("confidence") or "low")
     st.markdown("### CAVEATS")
     st.write(result.get("caveats") or "")
-    st.caption("Quotations above are taken from stored records. They are not fabricated by the model.")
+    st.caption(
+        f"AI provider used: **{result.get('ai_provider') or '—'}**. "
+        "Quotations above are taken from stored records. They are not fabricated by the model."
+    )

@@ -6,10 +6,13 @@ import json
 import logging
 from collections import Counter, defaultdict
 
+from typing import Any
+
 from sqlalchemy.orm import Session
 
-from ai.openrouter import OpenRouterClient, OpenRouterError
+from ai.openrouter import OpenRouterError
 from ai.prompts import CLUSTER_SYSTEM_PROMPT
+from ai.provider import AIProviderError
 from config import HIGH_INTENT_STATUSES
 from database.models import Analysis, Theme
 
@@ -151,7 +154,7 @@ def theme_for_key(key: str) -> tuple[str, str]:
     )
 
 
-def maybe_llm_merge(client: OpenRouterClient | None, keys: list[str]) -> dict[str, str]:
+def maybe_llm_merge(client: Any | None, keys: list[str]) -> dict[str, str]:
     """Optional remap of problem keys → theme names. Falls back to canonical map."""
     mapping = {key: theme_for_key(key)[0] for key in keys}
     if client is None or not client.is_configured or len(keys) < 3:
@@ -169,7 +172,7 @@ def maybe_llm_merge(client: OpenRouterClient | None, keys: list[str]) -> dict[st
             for member in members:
                 if member in mapping:
                     mapping[member] = name
-    except (OpenRouterError, Exception) as exc:  # noqa: BLE001
+    except (OpenRouterError, AIProviderError, Exception) as exc:  # noqa: BLE001
         logger.warning("LLM theme merge skipped: %s", exc)
     return mapping
 
@@ -177,7 +180,7 @@ def maybe_llm_merge(client: OpenRouterClient | None, keys: list[str]) -> dict[st
 def cluster_and_store(
     session: Session,
     analyses: list[Analysis],
-    llm_client: OpenRouterClient | None = None,
+    llm_client: Any | None = None,
 ) -> list[Theme]:
     session.query(Theme).delete()
     relevant = [a for a in analyses if a.relevant_to_wishlist]

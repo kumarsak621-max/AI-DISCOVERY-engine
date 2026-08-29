@@ -79,6 +79,25 @@ def confidence_score(items: list[Analysis]) -> float:
     return clamp(sum(a.confidence or 0.0 for a in items) / len(items) * 100.0)
 
 
+def multiplicative_framework_score(
+    frequency_count: int,
+    n_relevant: int,
+    conversion_relevance: float,
+    user_impact: float,
+    evidence_count: int,
+    evidence_cap: int = 20,
+) -> float:
+    """Frequency × purchase relevance × user impact × evidence strength, scaled 0–100.
+
+    This is an evidence-based ranking aid, not proof of causality.
+    """
+    freq = (frequency_count / n_relevant) if n_relevant else 0.0
+    purchase = max(0.0, min(float(conversion_relevance) / 100.0, 1.0))
+    impact = max(0.0, min(float(user_impact) / 100.0, 1.0))
+    strength = min(max(int(evidence_count), 0) / float(evidence_cap), 1.0)
+    return round(freq * purchase * impact * strength * 100.0, 2)
+
+
 def compute_opportunity_score(
     frequency: float,
     severity: float,

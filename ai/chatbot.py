@@ -6,7 +6,8 @@ from typing import Any
 
 import pandas as pd
 
-from ai.openrouter import OpenRouterClient, OpenRouterError
+from ai.openrouter import OpenRouterError
+from ai.provider import AIProviderError, get_llm_client, missing_key_message, provider_display_name
 from analytics.quantify import retrieved_quantification
 from analytics.retrieval import retrieve_records
 
@@ -23,6 +24,7 @@ Return JSON:
   "direct_answer": "string",
   "key_finding": "string",
   "observed_pattern": "string",
+  "business_implication": "string — labeled as hypothesis, not causality",
   "confidence": "high|medium|low",
   "caveats": "string",
   "evidence_numbers": [1, 2]
@@ -52,6 +54,7 @@ def records_to_evidence(retrieved: pd.DataFrame) -> list[dict[str, Any]]:
                 "n": i,
                 "quote": quote,
                 "source": str(row.get("source") or ""),
+                "subreddit": str(row.get("subreddit") or ""),
                 "url": str(row.get("source_url") or ""),
                 "date": str(row.get("published_at") or ""),
                 "platform": str(row.get("source") or ""),
@@ -70,10 +73,13 @@ def answer_question(
     api_key: str,
     model: str,
     period_label: str,
+    provider: str = "openrouter",
+    gemini_key: str = "",
 ) -> dict[str, Any]:
     retrieved = retrieve_records(records, question, limit=8)
     evidence = records_to_evidence(retrieved)
     quant = retrieved_quantification(retrieved)
+    used_name = provider_display_name(provider)
     if records.empty:
         return {
             "direct_answer": "No real reviews were collected for this period.",
@@ -82,6 +88,7 @@ def answer_question(
             "quantification": {"n": 0, "sources": {}, "themes": {}, "intents": {}},
             "source_breakdown": {},
             "observed_pattern": "—",
+            "business_implication": "—",
             "confidence": "low",
             "caveats": "Collect public conversations first. This answer is not based on Myntra user analytics.",
             "evidence": [],
@@ -89,6 +96,7 @@ def answer_question(
             "sources": [],
             "period": period_label,
             "used_openrouter": False,
+            "ai_provider": used_name,
         }
     if retrieved.empty:
         return {
@@ -98,6 +106,7 @@ def answer_question(
             "quantification": {"n": 0, "sources": {}, "themes": {}, "intents": {}},
             "source_breakdown": {},
             "observed_pattern": "—",
+            "business_implication": "—",
             "confidence": "low",
             "caveats": "The dataset may not contain reviews about this topic in the selected period.",
             "evidence": [],
@@ -105,13 +114,14 @@ def answer_question(
             "sources": [],
             "period": period_label,
             "used_openrouter": False,
+            "ai_provider": used_name,
         }
 
     numbered = []
     for item in evidence:
         numbered.append(
             f"RECORD {item['n']}\n"
-            f"source={item['source']} date={item['date']} url={item['url']}\n"
+            f"source={item['source']} subreddit={item.get('subreddit') or '—'} date={item['date']} url={item['url']}\n"
             f"intent={item['intent']} problem={item['problem']}\n"
             f"text={_clip(item['text'])}\n"
         )
@@ -123,17 +133,43 @@ def answer_question(
         + "\nAnswer using only these records."
     )
 
-    client = OpenRouterClient(api_key=api_key, model=model, temperature=0.1)
+    client = get_llm_client(
+        provider,
+        openrouter_key=api_key,
+        gemini_key=gemini_key,
+        model=model,
+        temperature=0.1,
+    )
+    used_name = provider_display_name(provider)
+    if not client.is_configured:
+        return {
+            "direct_answer": missing_key_message(provider),
+            "key_insight": "The selected AI provider is not configured. Evidence below is still retrieved stored records.",
+            "key_finding": "The selected AI provider is not configured. Evidence below is still retrieved stored records.",
+            "quantification": quant,
+            "source_breakdown": quant.get("sources") or {},
+            "observed_pattern": "—",
+            "business_implication": "—",
+            "confidence": "low",
+            "caveats": missing_key_message(provider),
+            "evidence": evidence,
+            "n_records": len(evidence),
+            "sources": sorted({e["source"] for e in evidence if e["source"]}),
+            "period": period_label,
+            "used_openrouter": False,
+            "ai_provider": used_name,
+        }
     try:
         parsed = client.complete_json(CHAT_SYSTEM, user_prompt)
-    except OpenRouterError as exc:
+    except (OpenRouterError, AIProviderError) as exc:
         return {
-            "direct_answer": f"OpenRouter is unavailable: {exc}",
+            "direct_answer": f"{used_name} is unavailable: {exc}",
             "key_insight": "The model did not run. Evidence below is still the retrieved stored records.",
             "key_finding": "The model did not run. Evidence below is still the retrieved stored records.",
             "quantification": quant,
             "source_breakdown": quant.get("sources") or {},
             "observed_pattern": "—",
+            "business_implication": "—",
             "confidence": "low",
             "caveats": str(exc),
             "evidence": evidence,
@@ -141,6 +177,7 @@ def answer_question(
             "sources": sorted({e["source"] for e in evidence if e["source"]}),
             "period": period_label,
             "used_openrouter": False,
+            "ai_provider": used_name,
         }
 
     allowed = {item["n"] for item in evidence}
@@ -164,11 +201,17 @@ def answer_question(
         "quantification": quant,
         "source_breakdown": quant.get("sources") or {},
         "observed_pattern": str(parsed.get("observed_pattern") or ""),
+        "business_implication": str(
+            parsed.get("business_implication")
+            or "This may indicate a hypothesis to validate — not a proven cause of non-purchase."
+        ),
         "confidence": str(parsed.get("confidence") or "low").lower(),
         "caveats": str(parsed.get("caveats") or "Public conversations are directional, not Myntra conversion rates."),
         "evidence": keep,
         "n_records": int(quant.get("n") or len(evidence)),
         "sources": sorted({e["source"] for e in evidence if e["source"]}),
         "period": period_label,
-        "used_openrouter": True,
+        "used_openrouter": used_name == "OpenRouter",
+        "ai_provider": used_name,
+        "ai_model": getattr(client, "model", model),
     }

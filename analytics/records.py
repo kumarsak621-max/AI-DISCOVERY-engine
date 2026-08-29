@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from processing.dates import utcnow, window_bounds
+from processing.dates import utcnow, window_bounds, window_bounds_months
 
 SOURCE_LABELS = [
     ("google_play", "Google Play Store"),
@@ -43,6 +43,11 @@ ANALYSIS_COLS = [
 
 def analysis_period_label(days: int = 30) -> str:
     start, end = window_bounds(days)
+    return f"Analysis period: {start.date().isoformat()} – {end.date().isoformat()}"
+
+
+def month_period_label(months: int) -> str:
+    start, end = window_bounds_months(months)
     return f"Analysis period: {start.date().isoformat()} – {end.date().isoformat()}"
 
 
@@ -108,6 +113,7 @@ def filter_review_records(
     rating: list | None = None,
     language: list[str] | None = None,
     segment: list[str] | None = None,
+    keyword: str = "",
 ) -> pd.DataFrame:
     if records.empty:
         return records
@@ -117,9 +123,23 @@ def filter_review_records(
     if preset == "last_30_days":
         start, end = window_bounds(30, now=now)
         out = out[(ts >= start) & (ts <= end)]
+        ts = pd.to_datetime(out.get("published_at"), utc=True, errors="coerce")
+    elif preset == "last_6_months":
+        start, end = window_bounds_months(6, now=now)
+        out = out[(ts >= start) & (ts <= end)]
+        ts = pd.to_datetime(out.get("published_at"), utc=True, errors="coerce")
+    elif preset == "last_12_months":
+        start, end = window_bounds_months(12, now=now)
+        out = out[(ts >= start) & (ts <= end)]
+        ts = pd.to_datetime(out.get("published_at"), utc=True, errors="coerce")
+    elif preset in {"last_30_months", "all_in_window"}:
+        start, end = window_bounds_months(30, now=now)
+        out = out[(ts >= start) & (ts <= end)]
+        ts = pd.to_datetime(out.get("published_at"), utc=True, errors="coerce")
     elif preset == "today":
         today = now.date()
         out = out[ts.dt.date == today]
+        ts = pd.to_datetime(out.get("published_at"), utc=True, errors="coerce")
     if source:
         out = out[out["source"].isin(source)]
     if sentiment and "sentiment" in out.columns:
@@ -155,6 +175,18 @@ def filter_review_records(
             + out.get("uncertainty_type", pd.Series("", index=out.index)).fillna("").astype(str)
             + " "
             + out.get("purchase_blocker", pd.Series("", index=out.index)).fillna("").astype(str)
+        ).str.lower()
+        out = out[blob.str.contains(needle, regex=False)]
+    if keyword and str(keyword).strip():
+        needle = str(keyword).strip().lower()
+        blob = (
+            out.get("original_text", pd.Series("", index=out.index)).fillna("").astype(str)
+            + " "
+            + out.get("text", pd.Series("", index=out.index)).fillna("").astype(str)
+            + " "
+            + out.get("title", pd.Series("", index=out.index)).fillna("").astype(str)
+            + " "
+            + out.get("video_title", pd.Series("", index=out.index)).fillna("").astype(str)
         ).str.lower()
         out = out[blob.str.contains(needle, regex=False)]
     return out

@@ -62,13 +62,13 @@ class YouTubeCollector(SourceAdapter):
         if since:
             published_after = since.strftime("%Y-%m-%dT%H:%M:%SZ")
         video_meta: list[tuple[str, str, str]] = []
-        for query in self.queries[:10]:
+        for query in self.queries[:16]:
             try:
                 params: dict[str, Any] = {
                     "part": "snippet",
                     "q": query,
                     "type": "video",
-                    "maxResults": 5,
+                    "maxResults": 10,
                     "order": "date",
                     "key": self.api_key,
                 }
@@ -94,44 +94,57 @@ class YouTubeCollector(SourceAdapter):
         for video_id, query, video_title in video_meta:
             if len(comments) >= self.max_records:
                 break
-            try:
-                response = requests.get(
-                    COMMENT_URL,
-                    params={
-                        "part": "snippet",
-                        "videoId": video_id,
-                        "maxResults": 50,
-                        "textFormat": "plainText",
-                        "order": "time",
-                        "key": self.api_key,
-                    },
-                    timeout=20,
-                )
-                if response.status_code == 403:
-                    continue
-                response.raise_for_status()
-                for item in response.json().get("items", []):
-                    top = item.get("snippet", {}).get("topLevelComment", {})
-                    snippet = top.get("snippet") or {}
-                    comment_id = top.get("id") or item.get("id") or ""
-                    published = parse_timestamp(snippet.get("publishedAt"))
-                    if since and not is_after(published, since):
-                        continue
-                    if self.until and published and published > self.until:
-                        continue
-                    if comment_id in seen_ids:
-                        continue
-                    seen_ids.add(comment_id)
-                    snippet["_query"] = query
-                    snippet["_video_id"] = video_id
-                    snippet["_video_title"] = video_title
-                    snippet["_comment_id"] = comment_id
-                    blob = f"{video_title} {snippet.get('textOriginal') or snippet.get('textDisplay') or ''}".lower()
-                    if "myntra" not in (video_title or "").lower() and not any(term in blob for term in RELEVANCE_TERMS):
-                        continue
-                    comments.append(snippet)
-            except requests.RequestException as exc:
-                logger.warning("YouTube comments failed for %s: %s", video_id, exc)
+            page_token = None
+            pages = 0
+            while pages < 4 and len(comments) < self.max_records:
+                pages += 1
+                params = {
+                    "part": "snippet",
+                    "videoId": video_id,
+                    "maxResults": 50,
+                    "textFormat": "plainText",
+                    "order": "time",
+                    "key": self.api_key,
+                }
+                if page_token:
+                    params["nextPageToken"] = page_token
+                    params["pageToken"] = page_token
+                try:
+                    response = requests.get(COMMENT_URL, params=params, timeout=20)
+                    if response.status_code == 403:
+                        break
+                    response.raise_for_status()
+                    payload = response.json()
+                    for item in payload.get("items", []):
+                        top = item.get("snippet", {}).get("topLevelComment", {})
+                        snippet = top.get("snippet") or {}
+                        comment_id = top.get("id") or item.get("id") or ""
+                        published = parse_timestamp(snippet.get("publishedAt"))
+                        if since and not is_after(published, since):
+                            continue
+                        if self.until and published and published > self.until:
+                            continue
+                        if comment_id in seen_ids:
+                            continue
+                        seen_ids.add(comment_id)
+                        snippet["_query"] = query
+                        snippet["_video_id"] = video_id
+                        snippet["_video_title"] = video_title
+                        snippet["_comment_id"] = comment_id
+                        blob = f"{video_title} {snippet.get('textOriginal') or snippet.get('textDisplay') or ''}".lower()
+                        if "myntra" not in (video_title or "").lower() and not any(
+                            term in blob for term in RELEVANCE_TERMS
+                        ):
+                            continue
+                        comments.append(snippet)
+                        if len(comments) >= self.max_records:
+                            break
+                    page_token = payload.get("nextPageToken")
+                    if not page_token:
+                        break
+                except requests.RequestException as exc:
+                    logger.warning("YouTube comments failed for %s: %s", video_id, exc)
+                    break
         logger.info("YouTube collector fetched %s comments", len(comments))
         return comments[: self.max_records]
 

@@ -60,7 +60,10 @@ class OpenRouterClient:
         temperature: float = 0.1,
         timeout: int = REQUEST_TIMEOUT_SECONDS,
     ) -> None:
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY", "")
+        if api_key is None:
+            self.api_key = os.getenv("OPENROUTER_API_KEY", "")
+        else:
+            self.api_key = str(api_key)
         self.model = model or os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
         self.temperature = temperature
         self.timeout = timeout
@@ -69,6 +72,13 @@ class OpenRouterClient:
     def is_configured(self) -> bool:
         return bool(self.api_key.strip())
 
+    def missing_key_message(self) -> str:
+        return "OpenRouter API key is not configured."
+
+    @property
+    def provider_name(self) -> str:
+        return "OpenRouter"
+
     def complete_json(
         self,
         system_prompt: str,
@@ -76,7 +86,7 @@ class OpenRouterClient:
         extra_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not self.is_configured:
-            raise OpenRouterError("OPENROUTER_API_KEY is not set", status_code=401, retryable=False)
+            raise OpenRouterError("OpenRouter API key is not configured.", status_code=401, retryable=False)
 
         payload: dict[str, Any] = {
             "model": self.model,

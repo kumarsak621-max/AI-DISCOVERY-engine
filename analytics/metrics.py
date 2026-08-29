@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from config import HIGH_INTENT_STATUSES
 from database.models import Analysis, CollectionRun, Conversation, DiscoveryRun, Opportunity, SourceState, Theme
-from processing.dates import in_research_window
+from processing.dates import in_bounds, in_research_window
 
 CAUSAL_CAVEAT = (
     "Among the analyzed public conversations, this pattern appears frequently. "
@@ -21,11 +21,19 @@ CAUSAL_CAVEAT = (
 )
 
 
-def load_conversations_frame(session: Session, window_days: int | None = None) -> pd.DataFrame:
+def load_conversations_frame(
+    session: Session,
+    window_days: int | None = None,
+    range_start=None,
+    range_end=None,
+) -> pd.DataFrame:
     rows = session.query(Conversation).all()
     records = []
     for row in rows:
-        if window_days is not None and row.published_at is not None:
+        if range_start is not None and range_end is not None:
+            if row.published_at is None or not in_bounds(row.published_at, range_start, range_end):
+                continue
+        elif window_days is not None and row.published_at is not None:
             if not in_research_window(row.published_at, window_days):
                 continue
         elif window_days is not None and row.published_at is None:
@@ -61,12 +69,26 @@ def load_conversations_frame(session: Session, window_days: int | None = None) -
                 "author_display": extra.get("author_display") or "",
                 "app_id": extra.get("app_id") or extra.get("app_version") or "",
                 "country": extra.get("country") or "",
+                "video_id": extra.get("video_id") or "",
+                "video_title": extra.get("video_title") or row.title or "",
+                "channel": extra.get("channel") or extra.get("author_display") or "",
+                "subreddit": extra.get("subreddit") or "",
+                "content_type": extra.get("content_type") or extra.get("kind") or "",
+                "score": extra.get("score"),
+                "num_comments": extra.get("num_comments"),
+                "post_id": extra.get("post_id") or "",
+                "comment_id": extra.get("comment_id") or "",
             }
         )
     return pd.DataFrame.from_records(records)
 
 
-def load_analysis_frame(session: Session, window_days: int | None = None) -> pd.DataFrame:
+def load_analysis_frame(
+    session: Session,
+    window_days: int | None = None,
+    range_start=None,
+    range_end=None,
+) -> pd.DataFrame:
     rows = (
         session.query(Analysis)
         .options(joinedload(Analysis.conversation))
@@ -76,7 +98,10 @@ def load_analysis_frame(session: Session, window_days: int | None = None) -> pd.
     for row in rows:
         conv = row.conversation
         published = conv.published_at if conv else None
-        if window_days is not None:
+        if range_start is not None and range_end is not None:
+            if published is None or not in_bounds(published, range_start, range_end):
+                continue
+        elif window_days is not None:
             if published is None or not in_research_window(published, window_days):
                 continue
         blockers = []
@@ -442,7 +467,7 @@ def source_health_rows(session: Session, openrouter_configured: bool | None = No
     for run in runs:
         if run.source not in latest_by_source:
             latest_by_source[run.source] = run
-    names = ["reddit", "youtube", "web", "google_play", "app_store"]
+    names = ["google_play", "youtube", "reddit", "apify_reddit", "app_store", "web"]
     by_state = {s.source: s for s in states}
     rows = []
     for name in names:
@@ -451,9 +476,20 @@ def source_health_rows(session: Session, openrouter_configured: bool | None = No
         status = state.status if state else "unknown"
         if name == "youtube" and not os.getenv("YOUTUBE_API_KEY", "").strip() and status in {"unknown", ""}:
             status = "not configured"
+        last_error = (state.last_error if state and state.last_error else "")[:200]
+        if name == "apify_reddit":
+            label = "Reddit / Apify"
+            if not os.getenv("APIFY_API_TOKEN", "").strip() and status in {"unknown", ""}:
+                status = "not configured"
+                last_error = last_error or "Apify API token is not configured."
+            elif not os.getenv("APIFY_REDDIT_ACTOR_ID", "").strip() and status in {"unknown", "", "not configured"}:
+                status = "not configured"
+                last_error = last_error or "Apify Reddit Actor is not configured."
+        else:
+            label = name
         rows.append(
             {
-                "Source": name,
+                "Source": label,
                 "Status": status,
                 "Last successful collection": (
                     str(state.last_successful_collection_time) if state and state.last_successful_collection_time else "—"
@@ -461,15 +497,31 @@ def source_health_rows(session: Session, openrouter_configured: bool | None = No
                 "Records found": last.records_found if last else 0,
                 "New records": last.records_new if last else 0,
                 "Failed records": last.records_failed if last else 0,
-                "Last error": (state.last_error if state and state.last_error else "")[:200],
+                "Last error": last_error,
             }
         )
+    last_ai = latest_run(session)
+    gemini_configured = bool(os.getenv("GEMINI_API_KEY", "").strip())
+    rows.append(
+        {
+            "Source": "Gemini",
+            "Status": "configured" if gemini_configured else "not configured",
+            "Last successful collection": str(last_ai.last_ai_success_at)
+            if last_ai and getattr(last_ai, "ai_provider", "") == "Gemini" and last_ai.last_ai_success_at
+            else "—",
+            "Records found": 0,
+            "New records": last_ai.conversations_analyzed
+            if last_ai and getattr(last_ai, "ai_provider", "") == "Gemini"
+            else 0,
+            "Failed records": 0,
+            "Last error": "" if gemini_configured else "Gemini API key is not configured.",
+        }
+    )
     or_configured = (
         openrouter_configured
         if openrouter_configured is not None
         else bool(os.getenv("OPENROUTER_API_KEY", "").strip())
     )
-    last_ai = latest_run(session)
     rows.append(
         {
             "Source": "OpenRouter",
@@ -478,7 +530,7 @@ def source_health_rows(session: Session, openrouter_configured: bool | None = No
             "Records found": 0,
             "New records": last_ai.conversations_analyzed if last_ai else 0,
             "Failed records": 0,
-            "Last error": "" if or_configured else "OPENROUTER_API_KEY is not set",
+            "Last error": "" if or_configured else "OpenRouter API key is not configured.",
         }
     )
     return rows
