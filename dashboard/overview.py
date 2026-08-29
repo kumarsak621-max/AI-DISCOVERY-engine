@@ -22,7 +22,8 @@ def render(
     analyzed: int,
     last_stats: dict | None,
     window_days: int,
-) -> bool:
+    total_records: int = 0,
+) -> dict:
     st.subheader("Overview")
     st.markdown("**Last 30 Days** of public conversations (by publication date).")
     st.caption(analysis_period_label(int(window_days)))
@@ -30,7 +31,7 @@ def render(
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Last successful collection", str(last_collection or "Never"))
-    c2.metric("Total records in window", 0 if conversations.empty else int(len(conversations)))
+    c2.metric("30-day records", 0 if conversations.empty else int(len(conversations)))
     new_n = (last_stats or {}).get("new")
     dup_n = (last_stats or {}).get("duplicates")
     c3.metric("New records (last run)", new_n if new_n is not None else "—")
@@ -41,6 +42,7 @@ def render(
     a2.metric("Pending analysis", pending_ai)
     a3.metric("Failed analysis", failed_ai)
     a4.metric("Last AI analysis", str(last_ai or "Never"))
+    st.caption(f"Total records in database: **{int(total_records)}** (all dates). Research window uses publication date.")
 
     errors = (last_stats or {}).get("errors")
     fetched = (last_stats or {}).get("fetched")
@@ -53,7 +55,11 @@ def render(
     for detail in (last_stats or {}).get("error_details") or []:
         st.warning(f"{detail.get('source')}: {detail.get('error') or detail.get('status')}")
 
-    clicked = st.button("Collect Latest Reviews", type="primary", use_container_width=True)
+    b1, b2 = st.columns(2)
+    with b1:
+        clicked = st.button("Collect Latest Reviews", type="primary", use_container_width=True)
+    with b2:
+        analyze = st.button("Analyze 30-Day Data", use_container_width=True)
     st.caption("Fetches newly published public records. Fake or demo reviews are never generated.")
 
     if conversations.empty:
@@ -76,4 +82,4 @@ def render(
     st.caption("Unavailable or errored sources are not filled with fake reviews.")
 
     st.markdown("Inspect underlying records in **Review Explorer** or **Last 30 Days**. Do not infer from this summary alone.")
-    return bool(clicked)
+    return {"collect": bool(clicked), "analyze": bool(analyze)}

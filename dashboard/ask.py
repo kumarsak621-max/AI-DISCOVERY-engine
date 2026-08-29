@@ -10,17 +10,21 @@ from analytics.records import analysis_period_label, build_review_records
 from dashboard.ui import empty_state
 
 EXAMPLES = [
-    "Why are Myntra users not purchasing products they save?",
-    "What are the biggest complaints in the last 30 days?",
-    "Compare Google Play Store and Apple App Store complaints.",
-    "What are users saying about fit and sizing?",
-    "What are the top reasons users postpone purchases?",
-    "What are the top unmet needs?",
-    "Which problem appears most frequently?",
-    "Show evidence for this insight.",
-    "Why are users not purchasing items they wishlist?",
-    "What are the top reasons for wishlist abandonment?",
-    "What do users do outside Myntra before purchasing?",
+    "Why do users add fashion products to their wishlist?",
+    "What prevents wishlisted products from eventually being purchased?",
+    "What uncertainties remain after users have identified a product they like?",
+    "What causes users to postpone a purchase?",
+    "How do users compare multiple shortlisted products?",
+    "What information do users seek outside Myntra before purchasing?",
+    "What role do fit, size, styling, price, reviews, occasion and social validation play?",
+    "When do users use the wishlist as genuine purchase intent versus simply as a bookmarking mechanism?",
+    "How do these behaviors differ across user segments?",
+    "What unmet needs emerge consistently across user conversations?",
+    "What are the top 5 problems in the last 30 days?",
+    "Which problem has the strongest evidence?",
+    "Which source reports the most fit-related complaints?",
+    "Compare Play Store and YouTube complaints.",
+    "Show evidence for the biggest opportunity.",
 ]
 
 
@@ -72,16 +76,23 @@ def render(
             period_label=period,
         )
 
-    st.markdown("### Direct answer")
+    st.markdown("### DIRECT ANSWER")
     st.write(result["direct_answer"])
-    st.markdown("### Key insight")
-    st.write(result.get("key_insight") or "—")
-    st.markdown(f"**Relevant retrieved records:** {result['n_records']}")
-    st.markdown(f"**Sources:** {', '.join(result['sources']) or '—'}")
-    st.markdown(f"**Date range of evidence:** {result['period']}")
-    st.markdown(f"**Confidence:** {result.get('confidence') or 'low'}")
+    st.markdown("### KEY FINDING")
+    st.write(result.get("key_finding") or result.get("key_insight") or "—")
 
-    st.markdown("### Evidence from collected reviews")
+    st.markdown("### QUANTIFICATION")
+    quant = result.get("quantification") or {}
+    st.write(f"Retrieved real records used: **{result.get('n_records', 0)}**")
+    themes = quant.get("themes") or {}
+    if themes:
+        st.write("Theme counts in retrieved set: " + ", ".join(f"{k} ({v})" for k, v in themes.items()))
+    intents = quant.get("intents") or {}
+    if intents:
+        st.write("Purchase intent in retrieved set: " + ", ".join(f"{k} ({v})" for k, v in intents.items()))
+    st.caption("These counts are from retrieved stored rows only — not from all Myntra users.")
+
+    st.markdown("### EVIDENCE")
     if not result["evidence"]:
         st.caption("No stored quotations available.")
     for item in result["evidence"]:
@@ -90,8 +101,17 @@ def render(
         st.markdown(f"{item['n']}. “{item['quote']}”")
         st.caption(f"Source: {item['source']} · Date: {item['date']}{link}")
 
-    st.markdown("### Observed pattern")
-    st.write(result.get("observed_pattern") or "—")
-    st.markdown("### Important caveats")
+    st.markdown("### SOURCE BREAKDOWN")
+    breakdown = result.get("source_breakdown") or {}
+    if breakdown:
+        st.write(", ".join(f"{k}: {v}" for k, v in breakdown.items()))
+    else:
+        st.write("—")
+
+    st.markdown("### DATE RANGE")
+    st.write(result.get("period") or "—")
+    st.markdown("### CONFIDENCE")
+    st.write(result.get("confidence") or "low")
+    st.markdown("### CAVEATS")
     st.write(result.get("caveats") or "")
     st.caption("Quotations above are taken from stored records. They are not fabricated by the model.")

@@ -77,6 +77,16 @@ def retrieve_records(records: pd.DataFrame, question: str, limit: int = 8) -> pd
         problem = str(row.get("primary_problem") or "").lower()
         if any(t in problem for t in qtok):
             boost += 2
+        qlow = question.lower()
+        if "fit" in qlow or "size" in qlow:
+            if any(w in blob.lower() for w in ("fit", "size", "sizing", "size chart")):
+                boost += 3
+        if "wishlist" in qlow or "save" in qlow:
+            if any(w in blob.lower() for w in ("wishlist", "saved", "bookmark")):
+                boost += 2
+        if "postpone" in qlow or "wait" in qlow or "sale" in qlow:
+            if any(w in blob.lower() for w in ("wait", "sale", "later", "postpone", "price")):
+                boost += 2
         scores.append(float(overlap + boost))
     ranked = records.copy()
     ranked["_score"] = scores

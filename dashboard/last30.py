@@ -23,5 +23,11 @@ def render(conversations: pd.DataFrame, analysis: pd.DataFrame) -> None:
         return
 
     show = view.sort_values("published_at", ascending=False, na_position="last")
-    for _, row in show.head(150).iterrows():
+    total = int(len(show))
+    page_size = 20
+    pages = max((total + page_size - 1) // page_size, 1)
+    page = st.number_input("Page", min_value=1, max_value=pages, value=1, step=1, key="last30_page")
+    start = (int(page) - 1) * page_size
+    st.caption(f"Showing {start + 1}–{min(start + page_size, total)} of {total}")
+    for _, row in show.iloc[start : start + page_size].iterrows():
         render_review_card(row)

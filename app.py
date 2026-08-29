@@ -48,15 +48,17 @@ from dashboard import uncertainty as uncertainty_page
 from dashboard import wishlist as wishlist_page
 from dashboard import workarounds as workarounds_page
 from dashboard import ask as ask_page
+from dashboard import analysis30 as analysis30_page
 from dashboard import collection as collection_page
 from dashboard import insights as insights_page
 from dashboard import last30 as last30_page
+from dashboard import opportunities_ui as opportunities_page
 from dashboard import overview as overview_page
 from dashboard import reviews as reviews_page
 from dashboard.ui import banner
 from database.db import init_db, session_scope
 from database.models import AppSetting, CollectionRun, Conversation
-from pipeline.discovery import run_discovery
+from pipeline.discovery import analyze_window, run_discovery
 from processing.dates import utcnow, window_bounds
 
 logging.basicConfig(
@@ -69,7 +71,9 @@ PAGES = [
     "Overview",
     "Review Explorer",
     "Last 30 Days",
-    "Live Collection",
+    "30-Day Analysis",
+    "Data Collection",
+    "Opportunity Areas",
     "AI Insights",
     "Ask AI",
     "Part 1 — AI Discovery Answers",
@@ -94,6 +98,25 @@ def _secret(name: str, default: str = "") -> str:
         return str(st.secrets.get(name, default))
     except Exception:
         return default
+
+
+def _apply_secrets_to_env() -> None:
+    """Collectors read os.environ; copy Streamlit secrets when env vars are empty."""
+    for name in (
+        "OPENROUTER_API_KEY",
+        "OPENROUTER_MODEL",
+        "YOUTUBE_API_KEY",
+        "REDDIT_CLIENT_ID",
+        "REDDIT_CLIENT_SECRET",
+        "REDDIT_USER_AGENT",
+        "CRON_SECRET",
+        "PLAY_STORE_APP_ID",
+        "APP_STORE_APP_ID",
+        "APP_STORE_COUNTRY",
+    ):
+        val = _secret(name)
+        if val and not os.getenv(name, "").strip():
+            os.environ[name] = val
 
 
 def _init() -> None:
@@ -181,6 +204,33 @@ def _run_collection(
     return run
 
 
+def _run_analysis(*, model: str, temperature: float, api_key: str, window_days: int, progress_bar) -> dict:
+    def on_progress(message: str, fraction: float) -> None:
+        progress_bar.progress(min(max(fraction, 0.0), 1.0), text=message)
+
+    with session_scope() as session:
+        result = analyze_window(
+            session,
+            api_key=api_key.strip(),
+            model=model.strip() or DEFAULT_MODEL,
+            temperature=float(temperature),
+            window_days=window_days,
+            progress=on_progress,
+        )
+    st.session_state["last_analysis_stats"] = result
+    if result.get("status") == "error":
+        st.error(result.get("error") or "Analysis failed")
+    else:
+        st.success(
+            f"Analyzed {result.get('analyzed', 0)} new/pending records "
+            f"({result.get('already_labeled', 0)} already labeled in window). "
+            f"Failed: {result.get('failed', 0)}."
+        )
+    if not api_key.strip():
+        st.warning("OPENROUTER_API_KEY is missing. Analysis cannot run.")
+    return result
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Myntra AI Wishlist Conversion Discovery Engine",
@@ -200,6 +250,7 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     _init()
+    _apply_secrets_to_env()
 
     st.title("Myntra AI Wishlist Conversion Discovery Engine")
     st.markdown("**Live Public Conversation Intelligence — Last 30 Days**")
@@ -291,6 +342,7 @@ def main() -> None:
         pending_ai = session.query(Conversation).filter(Conversation.analysis_status == "pending").count()
         failed_ai = session.query(Conversation).filter(Conversation.analysis_status == "failed").count()
         analyzed = session.query(Conversation).filter(Conversation.analysis_status == "complete").count()
+        total_records = session.query(Conversation).count()
         health = source_health_rows(session, openrouter_configured=bool(api_key.strip()))
 
     needs_first_run = collection_count == 0
@@ -420,11 +472,15 @@ def main() -> None:
 
     filters: dict = {}
     collect_latest = False
+    analyze_now = False
     skip_filters = {
         "Overview",
         "Review Explorer",
         "Last 30 Days",
+        "30-Day Analysis",
+        "Data Collection",
         "Live Collection",
+        "Opportunity Areas",
         "AI Insights",
         "Ask AI",
         "Part 1 — AI Discovery Answers",
@@ -488,31 +544,45 @@ def main() -> None:
         )
 
     if page == "Overview":
-        collect_latest = bool(
-            overview_page.render(
-                conversations_30,
-                analysis_30,
-                health,
-                last_collection=last_collection,
-                last_ai=last_ai,
-                pending_ai=pending_ai,
-                failed_ai=failed_ai,
-                analyzed=analyzed,
-                last_stats=last_stats,
-                window_days=30,
-            )
-        )
+        actions = overview_page.render(
+            conversations_30,
+            analysis_30,
+            health,
+            last_collection=last_collection,
+            last_ai=last_ai,
+            pending_ai=pending_ai,
+            failed_ai=failed_ai,
+            analyzed=analyzed,
+            last_stats=last_stats,
+            window_days=30,
+            total_records=total_records,
+        ) or {}
+        collect_latest = bool(actions.get("collect"))
+        analyze_now = bool(actions.get("analyze"))
     elif page == "Review Explorer":
         reviews_page.render(conversations_30, analysis_30, window_days=30)
     elif page == "Last 30 Days":
         last30_page.render(conversations_30, analysis_30)
-    elif page == "Live Collection":
-        collect_latest = collection_page.render(
+    elif page == "30-Day Analysis":
+        analyze_now = analysis30_page.render(
+            conversations_30,
+            analysis_30,
+            last_collection=last_collection,
+            last_ai=last_ai,
+            last_stats=last_stats,
+        )
+    elif page in {"Data Collection", "Live Collection"}:
+        actions = collection_page.render(
             health,
             last_collection=last_collection,
             last_stats=last_stats,
             interval_note=interval_note,
-        )
+            records_30=0 if conversations_30.empty else int(len(conversations_30)),
+        ) or {}
+        collect_latest = bool(actions.get("collect"))
+        analyze_now = bool(actions.get("analyze"))
+    elif page == "Opportunity Areas":
+        opportunities_page.render(conversations_30, analysis_30, opportunities)
     elif page == "AI Insights":
         insights_page.render(conversations, analysis, opportunities, summary, brief_md)
     elif page == "Ask AI":
@@ -564,6 +634,21 @@ def main() -> None:
         except Exception as exc:
             logger.exception("Collect Latest Reviews failed")
             st.error(f"Collect Latest Reviews failed: {exc}")
+
+    if analyze_now:
+        bar = st.progress(0.0, text="Analyzing last 30 days of stored records…")
+        try:
+            _run_analysis(
+                model=model,
+                temperature=temperature,
+                api_key=api_key,
+                window_days=30,
+                progress_bar=bar,
+            )
+            st.rerun()
+        except Exception as exc:
+            logger.exception("Analyze 30-Day Data failed")
+            st.error(f"Analyze 30-Day Data failed: {exc}")
 
     st.divider()
     st.markdown("### Export")

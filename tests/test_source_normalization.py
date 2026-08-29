@@ -47,3 +47,7 @@ def test_youtube_normalize_comment() -> None:
     assert "youtube.com/watch" in record["source_url"]
     assert record["source_item_id"] == "cmt1"
     assert record["published_at"] is not None
+    extra = __import__("json").loads(record["extra_json"])
+    assert extra["source_type"] == "YouTube"
+    assert extra["video_id"] == "vid123"
+    assert extra["comment_id"] == "cmt1"

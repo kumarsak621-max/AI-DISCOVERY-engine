@@ -9,7 +9,7 @@ from processing.dates import utcnow, window_bounds
 SOURCE_LABELS = [
     ("google_play", "Google Play Store"),
     ("app_store", "Apple App Store"),
-    ("web", "Web"),
+    ("web", "Web/Fashion Communities"),
     ("reddit", "Reddit"),
     ("youtube", "YouTube"),
 ]
@@ -107,6 +107,7 @@ def filter_review_records(
     theme: str = "",
     rating: list | None = None,
     language: list[str] | None = None,
+    segment: list[str] | None = None,
 ) -> pd.DataFrame:
     if records.empty:
         return records
@@ -142,6 +143,8 @@ def filter_review_records(
         out = out[out["rating"].map(_as_int).isin(wanted)]
     if language and "language" in out.columns:
         out = out[out["language"].isin(language)]
+    if segment and "user_segment" in out.columns:
+        out = out[out["user_segment"].isin(segment)]
     if category and "fashion_category" in out.columns:
         out = out[out["fashion_category"].isin(category)]
     if theme and theme != "All":

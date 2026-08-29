@@ -16,6 +16,26 @@ logger = logging.getLogger(__name__)
 
 SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 COMMENT_URL = "https://www.googleapis.com/youtube/v3/commentThreads"
+RELEVANCE_TERMS = (
+    "myntra",
+    "wishlist",
+    "wish list",
+    "size",
+    "fit",
+    "sizing",
+    "haul",
+    "fashion",
+    "dress",
+    "kurta",
+    "return",
+    "sale",
+    "price",
+    "order",
+    "buy",
+    "cart",
+    "quality",
+    "fabric",
+)
 
 
 class YouTubeCollector(SourceAdapter):
@@ -23,8 +43,9 @@ class YouTubeCollector(SourceAdapter):
     requires_credentials = True
 
     def __init__(self, **kwargs: Any) -> None:
+        api_key = kwargs.pop("api_key", None)
         super().__init__(**kwargs)
-        self.api_key = os.getenv("YOUTUBE_API_KEY", "").strip()
+        self.api_key = str(api_key or os.getenv("YOUTUBE_API_KEY", "")).strip()
 
     def is_available(self) -> tuple[bool, str]:
         if not self.api_key:
@@ -105,6 +126,9 @@ class YouTubeCollector(SourceAdapter):
                     snippet["_video_id"] = video_id
                     snippet["_video_title"] = video_title
                     snippet["_comment_id"] = comment_id
+                    blob = f"{video_title} {snippet.get('textOriginal') or snippet.get('textDisplay') or ''}".lower()
+                    if "myntra" not in (video_title or "").lower() and not any(term in blob for term in RELEVANCE_TERMS):
+                        continue
                     comments.append(snippet)
             except requests.RequestException as exc:
                 logger.warning("YouTube comments failed for %s: %s", video_id, exc)
@@ -124,6 +148,8 @@ class YouTubeCollector(SourceAdapter):
             "video_id": video_id,
             "video_title": raw.get("_video_title") or "",
             "comment_id": comment_id,
+            "channel": channel or raw.get("authorDisplayName") or "",
+            "author_display": raw.get("authorDisplayName") or "",
             "like_count": int(raw.get("likeCount") or 0),
         }
         return normalize_record(

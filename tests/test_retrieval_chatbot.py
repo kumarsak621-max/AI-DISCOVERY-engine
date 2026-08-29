@@ -101,6 +101,8 @@ def test_chatbot_without_key_returns_stored_evidence() -> None:
     assert result["evidence"]
     assert "fit" in result["evidence"][0]["text"].lower()
     assert "OpenRouter" in result["direct_answer"] or "unavailable" in result["direct_answer"].lower() or "not set" in result["direct_answer"].lower()
+    assert result["quantification"]["n"] >= 1
+    assert "reddit" in result["source_breakdown"]
 
 
 def test_source_summary_uses_real_counts_including_zeros() -> None:
@@ -121,7 +123,7 @@ def test_source_summary_uses_real_counts_including_zeros() -> None:
     by_source = {row["Source"]: row["Records"] for _, row in summary.iterrows()}
     assert by_source["Apple App Store"] == 2
     assert by_source["Google Play Store"] == 0
-    assert by_source["Web"] == 0
+    assert by_source["Web/Fashion Communities"] == 0
 
 
 def test_chatbot_empty_corpus_does_not_invent() -> None:
@@ -136,3 +138,5 @@ def test_chatbot_empty_corpus_does_not_invent() -> None:
     assert result["evidence"] == []
     assert "No real reviews" in result["direct_answer"]
     assert result["used_openrouter"] is False
+    assert result["quantification"]["n"] == 0
+    assert result["source_breakdown"] == {}

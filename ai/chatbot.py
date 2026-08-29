@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 
 from ai.openrouter import OpenRouterClient, OpenRouterError
+from analytics.quantify import retrieved_quantification
 from analytics.retrieval import retrieve_records
 
 CHAT_SYSTEM = """You are a product-discovery analyst for Myntra wishlist conversion.
@@ -20,7 +21,7 @@ Percentages, if any, are of these retrieved records — never of all Myntra user
 Return JSON:
 {
   "direct_answer": "string",
-  "key_insight": "string",
+  "key_finding": "string",
   "observed_pattern": "string",
   "confidence": "high|medium|low",
   "caveats": "string",
@@ -28,6 +29,7 @@ Return JSON:
 }
 
 evidence_numbers must be ids from the provided list. Do not quote text that is not in those records.
+Do not invent record counts or percentages. Quantification is computed separately from the retrieved rows.
 """
 
 
@@ -71,10 +73,14 @@ def answer_question(
 ) -> dict[str, Any]:
     retrieved = retrieve_records(records, question, limit=8)
     evidence = records_to_evidence(retrieved)
+    quant = retrieved_quantification(retrieved)
     if records.empty:
         return {
             "direct_answer": "No real reviews were collected for this period.",
             "key_insight": "The chatbot has no stored public conversations to retrieve.",
+            "key_finding": "The chatbot has no stored public conversations to retrieve.",
+            "quantification": {"n": 0, "sources": {}, "themes": {}, "intents": {}},
+            "source_breakdown": {},
             "observed_pattern": "—",
             "confidence": "low",
             "caveats": "Collect public conversations first. This answer is not based on Myntra user analytics.",
@@ -88,6 +94,9 @@ def answer_question(
         return {
             "direct_answer": "Insufficient evidence in the collected dataset.",
             "key_insight": "No stored records matched this question closely enough to quote.",
+            "key_finding": "Insufficient evidence in the collected dataset.",
+            "quantification": {"n": 0, "sources": {}, "themes": {}, "intents": {}},
+            "source_breakdown": {},
             "observed_pattern": "—",
             "confidence": "low",
             "caveats": "The dataset may not contain reviews about this topic in the selected period.",
@@ -121,6 +130,9 @@ def answer_question(
         return {
             "direct_answer": f"OpenRouter is unavailable: {exc}",
             "key_insight": "The model did not run. Evidence below is still the retrieved stored records.",
+            "key_finding": "The model did not run. Evidence below is still the retrieved stored records.",
+            "quantification": quant,
+            "source_breakdown": quant.get("sources") or {},
             "observed_pattern": "—",
             "confidence": "low",
             "caveats": str(exc),
@@ -144,14 +156,18 @@ def answer_question(
     if not keep:
         keep = evidence[:4]
 
+    finding = str(parsed.get("key_finding") or parsed.get("key_insight") or "")
     return {
-        "direct_answer": str(parsed.get("direct_answer") or "Insufficient evidence in the retrieved records."),
-        "key_insight": str(parsed.get("key_insight") or ""),
+        "direct_answer": str(parsed.get("direct_answer") or "Insufficient evidence in the collected dataset."),
+        "key_insight": finding,
+        "key_finding": finding,
+        "quantification": quant,
+        "source_breakdown": quant.get("sources") or {},
         "observed_pattern": str(parsed.get("observed_pattern") or ""),
         "confidence": str(parsed.get("confidence") or "low").lower(),
         "caveats": str(parsed.get("caveats") or "Public conversations are directional, not Myntra conversion rates."),
         "evidence": keep,
-        "n_records": len(evidence),
+        "n_records": int(quant.get("n") or len(evidence)),
         "sources": sorted({e["source"] for e in evidence if e["source"]}),
         "period": period_label,
         "used_openrouter": True,

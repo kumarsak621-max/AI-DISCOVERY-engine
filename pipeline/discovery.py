@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+import os
+from datetime import datetime
 from typing import Any, Callable
 
 from sqlalchemy.orm import Session
@@ -15,6 +16,7 @@ from ai.openrouter import OpenRouterClient
 from analytics.brief import render_research_brief
 from analytics.metrics import (
     build_discovery_summary,
+    latest_run,
     load_analysis_frame,
     load_conversations_frame,
     load_opportunities_frame,
@@ -160,6 +162,7 @@ def collect_source(
         kwargs["queries"] = list(DISCOVERY_QUERIES) + (extra_queries or [])
     elif source_name == "youtube":
         kwargs["queries"] = list(YOUTUBE_QUERIES)
+        kwargs["api_key"] = os.getenv("YOUTUBE_API_KEY", "")
     collector = factory(**kwargs)
     run = CollectionRun(source=source_name, status="running", started_at=utcnow())
     session.add(run)
@@ -209,6 +212,79 @@ def collect_source(
     run.completed_at = utcnow()
     session.commit()
     return records, run
+
+
+def analyze_window(
+    session: Session,
+    *,
+    api_key: str,
+    model: str,
+    temperature: float,
+    window_days: int = 30,
+    progress: ProgressCb | None = None,
+    discovery_run: DiscoveryRun | None = None,
+) -> dict[str, Any]:
+    """Analyze stored records in the publication-date window. Does not collect or invent reviews."""
+    start, end = window_bounds(window_days)
+    client = OpenRouterClient(api_key=api_key, model=model, temperature=temperature)
+    if not client.is_configured:
+        return {
+            "status": "error",
+            "error": "OPENROUTER_API_KEY is not set",
+            "analyzed": 0,
+            "failed": 0,
+            "pending": 0,
+            "already_labeled": 0,
+        }
+    _emit(progress, "AI analysis", 0.2)
+    pending = (
+        session.query(Conversation)
+        .filter(Conversation.analysis_status.in_(["pending", "failed"]))
+        .all()
+    )
+    pending = [
+        c
+        for c in pending
+        if c.published_at is None or in_research_window(c.published_at, window_days, now=end)
+    ]
+    analyzer = ConversationAnalyzer(client)
+    analyzed, failed = analyzer.analyze_batch(session, pending)
+    _emit(progress, "Theme clustering", 0.65)
+    windowed = (
+        session.query(Conversation)
+        .filter(
+            (Conversation.published_at.is_(None))
+            | ((Conversation.published_at >= start) & (Conversation.published_at <= end))
+        )
+        .all()
+    )
+    analyses = [c.analysis for c in windowed if c.analysis is not None]
+    cluster_and_store(session, analyses, llm_client=client)
+    _emit(progress, "Opportunity scoring", 0.85)
+    build_opportunities(session, analyses)
+    conv_df = load_conversations_frame(session, window_days=window_days)
+    analysis_df = load_analysis_frame(session, window_days=window_days)
+    opp_df = load_opportunities_frame(session)
+    summary = build_discovery_summary(conv_df, analysis_df, opp_df)
+    brief = render_research_brief(summary, window_days=window_days)
+    target = discovery_run or latest_run(session)
+    if target:
+        if analyzed:
+            target.last_ai_success_at = utcnow()
+        target.conversations_analyzed = analyzed
+        target.relevant_count = int(summary["kpis"].get("relevant") or 0)
+        target.summary_json = json.dumps(summary)
+        target.brief_markdown = brief
+        session.commit()
+    _emit(progress, "Analysis complete", 1.0)
+    return {
+        "status": "complete",
+        "error": "",
+        "analyzed": analyzed,
+        "failed": failed,
+        "pending": len(pending),
+        "already_labeled": len(analyses),
+    }
 
 
 def run_discovery(
@@ -326,57 +402,21 @@ def run_discovery(
             session.commit()
 
         _emit(progress, "AI analysis", 0.5)
-        client = OpenRouterClient(api_key=api_key, model=model, temperature=temperature)
-        analyzed = 0
-        if client.is_configured:
-            pending = (
-                session.query(Conversation)
-                .filter(Conversation.analysis_status.in_(["pending", "failed"]))
-                .all()
-            )
-            # Only analyze items in the research window (publication date)
-            pending = [
-                c
-                for c in pending
-                if c.published_at is None or in_research_window(c.published_at, window_days, now=end)
-            ]
-            analyzer = ConversationAnalyzer(client)
-            ok, _failed_ai = analyzer.analyze_batch(session, pending)
-            analyzed = ok
-            if ok:
-                run.last_ai_success_at = utcnow()
-        else:
-            logger.warning("OPENROUTER_API_KEY missing — collected data stored, analysis pending")
-
-        run.conversations_analyzed = analyzed
-
-        _emit(progress, "Theme clustering", 0.78)
-        windowed = (
-            session.query(Conversation)
-            .filter(
-                (Conversation.published_at.is_(None))
-                | (
-                    (Conversation.published_at >= start)
-                    & (Conversation.published_at <= end)
-                )
-            )
-            .all()
+        result = analyze_window(
+            session,
+            api_key=api_key,
+            model=model,
+            temperature=temperature,
+            window_days=window_days,
+            progress=progress,
+            discovery_run=run,
         )
-        analyses = [c.analysis for c in windowed if c.analysis is not None]
-        llm_for_cluster = client if client.is_configured else None
-        cluster_and_store(session, analyses, llm_client=llm_for_cluster)
+        if result["status"] == "error":
+            logger.warning("%s — collected data stored, analysis pending", result.get("error"))
+            run.conversations_analyzed = 0
+        else:
+            run.conversations_analyzed = int(result.get("analyzed") or 0)
 
-        _emit(progress, "Opportunity scoring", 0.88)
-        build_opportunities(session, analyses)
-
-        conv_df = load_conversations_frame(session, window_days=window_days)
-        analysis_df = load_analysis_frame(session, window_days=window_days)
-        opp_df = load_opportunities_frame(session)
-        summary = build_discovery_summary(conv_df, analysis_df, opp_df)
-        brief = render_research_brief(summary, window_days=window_days)
-        run.relevant_count = int(summary["kpis"].get("relevant") or 0)
-        run.summary_json = json.dumps(summary)
-        run.brief_markdown = brief
         run.status = "complete"
         run.finished_at = utcnow()
         session.commit()

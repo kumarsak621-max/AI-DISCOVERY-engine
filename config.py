@@ -102,11 +102,15 @@ YOUTUBE_QUERIES: list[str] = [
     "Myntra reviews",
     "Myntra haul",
     "Myntra shopping",
+    "Myntra fashion",
+    "Myntra shopping experience",
     "Myntra sizing",
     "Myntra try on",
     "Myntra outfit review",
-    "online fashion shopping India",
     "Myntra wishlist",
+    "fashion shopping problems",
+    "online fashion purchase uncertainty",
+    "online fashion shopping India",
 ]
 
 DISCOVERY_QUERIES: list[str] = MYNTRA_QUERIES + FASHION_QUERIES
