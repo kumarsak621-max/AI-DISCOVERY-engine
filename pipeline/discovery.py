@@ -130,7 +130,10 @@ def prepare_records(raw_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         record = raw if "content_hash" in raw else normalize_record(raw)
         if not record.get("language") or record.get("language") == "unknown":
             record["language"] = detect_language(record.get("text") or "")
-        if is_valid_conversation(record):
+        min_chars = 20 if record.get("source") in {"app_store", "google_play", "youtube"} else 40
+        if record.get("source") == "reddit":
+            min_chars = 30
+        if is_valid_conversation(record, min_chars=min_chars):
             normalized.append(record)
     unique, _dupes = deduplicate_records(normalized)
     return flag_syndicated(unique)
@@ -184,6 +187,16 @@ def collect_source(
             found=len(records),
             failed=failed,
         )
+    elif collector.status == "unavailable":
+        run.status = "unavailable"
+        run.error_message = collector.last_error
+        store.set_status(
+            source_name,
+            status="unavailable",
+            error=collector.last_error,
+            found=len(records),
+            failed=failed,
+        )
     else:
         run.status = "ok"
         store.set_status(
@@ -224,7 +237,8 @@ def run_discovery(
     try:
         store = DbSourceStateStore(session)
         all_raw: list[dict[str, Any]] = []
-        sources = enabled_sources or ["reddit", "youtube", "web"]
+        source_results: list[dict[str, Any]] = []
+        sources = enabled_sources or ["reddit", "youtube", "web", "app_store", "google_play"]
         n = max(len(sources), 1)
         for i, source_name in enumerate(sources):
             if source_name not in COLLECTOR_FACTORIES:
@@ -261,17 +275,32 @@ def run_discovery(
                 session.add(err)
                 store.set_status(source_name, status="error", error=str(exc)[:500])
                 session.commit()
+                source_results.append(
+                    {
+                        "source": source_name,
+                        "status": "error",
+                        "found": 0,
+                        "error": str(exc)[:500],
+                    }
+                )
                 continue
-            # Keep only publication dates inside the research window
+            # Keep only records with an actual publication timestamp inside the research window.
             in_window = []
             for rec in records:
                 pub = rec.get("published_at")
-                if pub is None or in_research_window(pub, window_days, now=end):
-                    # RSS items without dates are kept but flagged; window uses published_at when present
-                    if pub is None:
-                        rec["published_at"] = None
+                if pub is None:
+                    continue
+                if in_research_window(pub, window_days, now=end):
                     in_window.append(rec)
             all_raw.extend(in_window)
+            source_results.append(
+                {
+                    "source": source_name,
+                    "status": src_run.status,
+                    "found": len(in_window),
+                    "error": src_run.error_message or "",
+                }
+            )
             if src_run.status == "ok":
                 store.set_last_collection_time(source_name, utcnow())
             session.commit()
@@ -282,6 +311,9 @@ def run_discovery(
         new_rows, dupes, failed = persist_conversations(session, prepared)
         run.conversations_collected = len(prepared)
         run.conversations_new = len(new_rows)
+        run.conversations_duplicate = int(dupes)
+        run.records_fetched = len(all_raw)
+        run.source_results = source_results
 
         # Update last collection run duplicate counts
         last_runs = (

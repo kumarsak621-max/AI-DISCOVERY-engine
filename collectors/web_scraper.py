@@ -155,8 +155,15 @@ class WebCollector(SourceAdapter):
             time.sleep(delay)
 
         logger.info("Web collector fetched %s items", len(items))
-        if not items and self.last_error:
-            self.status = "error"
+        if not items:
+            if self.last_error:
+                self.status = "error"
+            else:
+                self.status = "unavailable"
+                self.last_error = (
+                    "No public web records collected. Configured feeds were skipped by robots.txt "
+                    "or returned no keyword-matching posts. No fake reviews were generated."
+                )
         return items[: self.max_records]
 
     def normalize(self, raw: dict[str, Any]) -> dict[str, Any]:
@@ -173,7 +180,7 @@ class WebCollector(SourceAdapter):
                 "text": f"{title}\n\n{summary}".strip(),
                 "query_used": raw.get("query") or "rss",
                 "engagement_count": 0,
-                "extra": {"feed": raw.get("source_name") or ""},
+                "extra": {"source_type": "Web", "feed": raw.get("source_name") or ""},
             }
         )
 

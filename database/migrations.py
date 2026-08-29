@@ -34,6 +34,12 @@ def apply_migrations(engine: Engine) -> None:
             statements.append("UPDATE conversations SET published_at = timestamp WHERE published_at IS NULL")
     if "extra_json" not in existing:
         statements.append("ALTER TABLE conversations ADD COLUMN extra_json TEXT DEFAULT '{}'")
+    if "discovery_runs" in tables:
+        run_cols = {col["name"] for col in inspector.get_columns("discovery_runs")}
+        if "conversations_duplicate" not in run_cols:
+            statements.append(
+                "ALTER TABLE discovery_runs ADD COLUMN conversations_duplicate INTEGER DEFAULT 0"
+            )
     if statements:
         with engine.begin() as conn:
             for stmt in statements:

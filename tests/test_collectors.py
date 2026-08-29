@@ -43,12 +43,59 @@ def test_app_store_normalize_keeps_url_and_id() -> None:
             "author": {"name": {"label": "A"}},
             "updated": {"label": "2026-08-10T00:00:00Z"},
             "im:rating": {"label": "3"},
+            "link": {"attributes": {"href": "https://itunes.apple.com/in/review?id=907394059"}},
         }
     )
     assert record["source"] == "app_store"
     assert record["source_item_id"] == "12345"
-    assert "apps.apple.com" in record["source_url"]
+    assert "itunes.apple.com" in record["source_url"]
     assert record["published_at"] is not None
+    extra = __import__("json").loads(record["extra_json"])
+    assert extra["source_type"] == "Apple App Store"
+    assert extra["rating"] == 3
+    assert extra["app_id"] == "907394059"
+
+
+def test_google_play_listing_without_reviews_is_unavailable(monkeypatch) -> None:
+    collector = GooglePlayCollector()
+    monkeypatch.setattr(collector, "is_available", lambda: (True, ""))
+
+    class Response:
+        status_code = 200
+        text = (
+            '<html><script type="application/ld+json">'
+            '{"@type":"SoftwareApplication","aggregateRating":{"ratingValue":4.2}}'
+            "</script></html>"
+        )
+
+        def raise_for_status(self) -> None:
+            return None
+
+    monkeypatch.setattr("collectors.google_play.requests.get", lambda *a, **k: Response())
+    records, _failed = collector.collect()
+    assert records == []
+    assert collector.status == "unavailable"
+    assert "no individual reviews" in collector.last_error.lower()
+
+
+def test_google_play_jsonld_reviews_are_normalized(monkeypatch) -> None:
+    collector = GooglePlayCollector()
+    html = (
+        '<html><script type="application/ld+json">'
+        '{"@type":"SoftwareApplication","review":[{"reviewBody":"Size chart on Myntra is confusing so I did not buy the wishlisted dress.",'
+        '"author":{"name":"Pat"},"datePublished":"2026-08-20T00:00:00Z",'
+        '"reviewRating":{"ratingValue":2},"url":"https://play.google.com/store/apps/details?id=com.myntra.android&reviewId=abc"}]}'
+        "</script></html>"
+    )
+    raw = collector._reviews_from_jsonld(html)
+    assert len(raw) == 1
+    record = collector.normalize(raw[0])
+    assert record["source"] == "google_play"
+    assert "Size chart" in record["text"]
+    extra = __import__("json").loads(record["extra_json"])
+    assert extra["source_type"] == "Google Play Store"
+    assert extra["rating"] == 2
+    assert extra["app_id"] == "com.myntra.android"
 
 
 def test_reddit_collect_without_queries_errors_cleanly() -> None:

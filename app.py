@@ -47,6 +47,12 @@ from dashboard import segments as segments_page
 from dashboard import uncertainty as uncertainty_page
 from dashboard import wishlist as wishlist_page
 from dashboard import workarounds as workarounds_page
+from dashboard import ask as ask_page
+from dashboard import collection as collection_page
+from dashboard import insights as insights_page
+from dashboard import last30 as last30_page
+from dashboard import overview as overview_page
+from dashboard import reviews as reviews_page
 from dashboard.ui import banner
 from database.db import init_db, session_scope
 from database.models import AppSetting, CollectionRun, Conversation
@@ -60,6 +66,12 @@ logging.basicConfig(
 logger = logging.getLogger("myntra_discovery")
 
 PAGES = [
+    "Overview",
+    "Review Explorer",
+    "Last 30 Days",
+    "Live Collection",
+    "AI Insights",
+    "Ask AI",
     "Part 1 — AI Discovery Answers",
     "Executive Discovery",
     "Problem Landscape",
@@ -117,7 +129,7 @@ def _run_collection(
     full_refresh: bool,
     extra_queries: list[str],
     progress_bar,
-) -> None:
+):
     def on_progress(message: str, fraction: float) -> None:
         progress_bar.progress(min(max(fraction, 0.0), 1.0), text=message)
 
@@ -134,12 +146,39 @@ def _run_collection(
             extra_queries=extra_queries,
             progress=on_progress,
         )
+    st.session_state["last_collection_stats"] = {
+        "new": int(getattr(run, "conversations_new", 0) or 0),
+        "duplicates": int(getattr(run, "conversations_duplicate", 0) or 0),
+        "analyzed": int(getattr(run, "conversations_analyzed", 0) or 0),
+        "collected": int(getattr(run, "conversations_collected", 0) or 0),
+        "fetched": int(getattr(run, "records_fetched", getattr(run, "conversations_collected", 0)) or 0),
+        "status": run.status,
+        "error": run.error or "",
+        "finished_at": str(run.finished_at or ""),
+        "sources_ok": [
+            str(item.get("source"))
+            for item in (getattr(run, "source_results", None) or [])
+            if item.get("status") == "ok"
+        ],
+        "errors": sum(
+            1
+            for item in (getattr(run, "source_results", None) or [])
+            if item.get("status") in {"error", "unavailable"}
+        ),
+        "error_details": [
+            item
+            for item in (getattr(run, "source_results", None) or [])
+            if item.get("status") in {"error", "unavailable"}
+        ],
+    }
     st.success(
         f"Collection {run.status}. Found {run.conversations_collected}, "
-        f"new {run.conversations_new}, analyzed {run.conversations_analyzed}."
+        f"new {run.conversations_new}, duplicates {getattr(run, 'conversations_duplicate', 0)}, "
+        f"analyzed {run.conversations_analyzed}."
     )
     if not api_key.strip():
         st.warning("OPENROUTER_API_KEY is missing. Records were stored; AI analysis remains pending.")
+    return run
 
 
 def main() -> None:
@@ -215,7 +254,7 @@ def main() -> None:
         enabled = st.multiselect(
             "Sources",
             ["reddit", "youtube", "web", "app_store", "google_play"],
-            default=["reddit", "youtube", "web", "app_store"],
+            default=["reddit", "youtube", "web", "app_store", "google_play"],
         )
         max_records = st.selectbox("Max records per source", [100, 200, 500, 1000], index=1)
         model = st.text_input("OpenRouter Model", value=default_model)
@@ -348,6 +387,10 @@ def main() -> None:
     with session_scope() as session:
         conversations = load_conversations_frame(session, window_days=int(window_days))
         analysis = load_analysis_frame(session, window_days=int(window_days))
+        conversations_30 = (
+            conversations if int(window_days) == 30 else load_conversations_frame(session, window_days=30)
+        )
+        analysis_30 = analysis if int(window_days) == 30 else load_analysis_frame(session, window_days=30)
         themes = load_themes_frame(session)
         opportunities = load_opportunities_frame(session)
         run = latest_run(session)
@@ -362,13 +405,13 @@ def main() -> None:
             summary = build_discovery_summary(conversations, analysis, opportunities)
 
     if "nav_page" not in st.session_state:
-        st.session_state["nav_page"] = "Part 1 — AI Discovery Answers"
+        st.session_state["nav_page"] = "Overview"
 
     page = st.radio(
         "Pages",
         PAGES,
         horizontal=True,
-        index=PAGES.index(st.session_state.get("nav_page", "Executive Discovery"))
+        index=PAGES.index(st.session_state.get("nav_page", "Overview"))
         if st.session_state.get("nav_page") in PAGES
         else 0,
         key="page_radio",
@@ -376,7 +419,19 @@ def main() -> None:
     st.session_state["nav_page"] = page
 
     filters: dict = {}
-    if page not in {"Part 1 — AI Discovery Answers", "Executive Discovery", "AI Research Brief"}:
+    collect_latest = False
+    skip_filters = {
+        "Overview",
+        "Review Explorer",
+        "Last 30 Days",
+        "Live Collection",
+        "AI Insights",
+        "Ask AI",
+        "Part 1 — AI Discovery Answers",
+        "Executive Discovery",
+        "AI Research Brief",
+    }
+    if page not in skip_filters:
         with st.expander("Filters", expanded=False):
             if not analysis.empty:
                 f1, f2, f3 = st.columns(3)
@@ -404,7 +459,71 @@ def main() -> None:
                     dmin, dmax = ts.min().date(), ts.max().date()
                     filters["date_range"] = st.date_input("Date range", value=(dmin, dmax))
 
-    if page == "Part 1 — AI Discovery Answers":
+    last_stats = st.session_state.get("last_collection_stats")
+    if last_stats is None and run is not None:
+        last_stats = {
+            "new": int(getattr(run, "conversations_new", 0) or 0),
+            "duplicates": int(getattr(run, "conversations_duplicate", 0) or 0),
+            "analyzed": int(getattr(run, "conversations_analyzed", 0) or 0),
+            "collected": int(getattr(run, "conversations_collected", 0) or 0),
+            "fetched": int(getattr(run, "records_fetched", getattr(run, "conversations_collected", 0)) or 0),
+            "status": run.status,
+            "error": run.error or "",
+            "finished_at": str(run.finished_at or ""),
+            "sources_ok": [],
+            "errors": 0,
+            "error_details": [],
+        }
+    interval_note = (
+        "Automatic collection is not a background daemon on Streamlit. "
+        "Use Collect Latest Reviews, keep the dashboard open with a visit interval, "
+        "or run `python -m scheduler.jobs` / the HTTP cron endpoint."
+    )
+    if interval_hours == 0:
+        interval_note = "Scheduled collection is off (manual only). " + interval_note
+    else:
+        interval_note = (
+            f"Visit-based incremental collection every {interval_hours}h is enabled when this app is open. "
+            + interval_note
+        )
+
+    if page == "Overview":
+        collect_latest = bool(
+            overview_page.render(
+                conversations_30,
+                analysis_30,
+                health,
+                last_collection=last_collection,
+                last_ai=last_ai,
+                pending_ai=pending_ai,
+                failed_ai=failed_ai,
+                analyzed=analyzed,
+                last_stats=last_stats,
+                window_days=30,
+            )
+        )
+    elif page == "Review Explorer":
+        reviews_page.render(conversations_30, analysis_30, window_days=30)
+    elif page == "Last 30 Days":
+        last30_page.render(conversations_30, analysis_30)
+    elif page == "Live Collection":
+        collect_latest = collection_page.render(
+            health,
+            last_collection=last_collection,
+            last_stats=last_stats,
+            interval_note=interval_note,
+        )
+    elif page == "AI Insights":
+        insights_page.render(conversations, analysis, opportunities, summary, brief_md)
+    elif page == "Ask AI":
+        ask_page.render(
+            conversations_30,
+            analysis_30,
+            api_key=api_key,
+            model=model,
+            window_days=30,
+        )
+    elif page == "Part 1 — AI Discovery Answers":
         part1_page.render(analysis, opportunities)
     elif page == "Executive Discovery":
         executive_page.render(conversations, analysis, opportunities, summary)
@@ -426,6 +545,25 @@ def main() -> None:
         segments_page.render(analysis, opportunities, filters)
     elif page == "AI Research Brief":
         brief_page.render(brief_md)
+
+    if collect_latest:
+        bar = st.progress(0.0, text="Collecting latest public records…")
+        try:
+            _run_collection(
+                enabled=enabled,
+                max_records=int(max_records),
+                model=model,
+                temperature=temperature,
+                api_key=api_key,
+                window_days=30,
+                full_refresh=False,
+                extra_queries=extra_queries,
+                progress_bar=bar,
+            )
+            st.rerun()
+        except Exception as exc:
+            logger.exception("Collect Latest Reviews failed")
+            st.error(f"Collect Latest Reviews failed: {exc}")
 
     st.divider()
     st.markdown("### Export")

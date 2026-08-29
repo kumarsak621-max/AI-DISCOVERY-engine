@@ -36,4 +36,13 @@ sources:
     rate_limit_seconds: 2.0
     query: "online fashion shopping India"
 
+  - name: reddit_rss_myntra_app_review
+    type: rss
+    enabled: true
+    url: "https://www.reddit.com/search.rss?q=Myntra+app+review&sort=new&t=month"
+    rate_limit_seconds: 2.0
+    query: "Myntra app review"
+    require_keywords:
+      - myntra
+
 html_sources: []

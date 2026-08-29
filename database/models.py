@@ -191,6 +191,7 @@ class DiscoveryRun(Base):
     conversations_collected: Mapped[int] = mapped_column(Integer, default=0)
     conversations_new: Mapped[int] = mapped_column(Integer, default=0)
     conversations_analyzed: Mapped[int] = mapped_column(Integer, default=0)
+    conversations_duplicate: Mapped[int] = mapped_column(Integer, default=0)
     relevant_count: Mapped[int] = mapped_column(Integer, default=0)
     full_refresh: Mapped[bool] = mapped_column(Boolean, default=False)
     summary_json: Mapped[str] = mapped_column(Text, default="{}")

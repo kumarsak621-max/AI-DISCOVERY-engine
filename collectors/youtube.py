@@ -120,6 +120,7 @@ class YouTubeCollector(SourceAdapter):
         if isinstance(channel_obj, dict):
             channel = channel_obj.get("value") or ""
         extra = {
+            "source_type": "YouTube",
             "video_id": video_id,
             "video_title": raw.get("_video_title") or "",
             "comment_id": comment_id,

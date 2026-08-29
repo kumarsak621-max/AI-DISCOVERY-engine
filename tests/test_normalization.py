@@ -52,6 +52,22 @@ def test_normalize_record_maps_fields() -> None:
     assert parse_timestamp(raw["created_utc"]) is not None
 
 
+def test_normalize_record_fingerprint_without_source_id() -> None:
+    raw = {
+        "source": "web",
+        "url": "https://example.com/post",
+        "title": "Myntra wishlist",
+        "text": "I added a kurta and I am waiting for the sale before I buy.",
+        "published_at": "2026-08-20T00:00:00Z",
+    }
+    a = normalize_record(raw)
+    b = normalize_record(raw)
+    assert a["source_item_id"] == ""
+    assert a["content_hash"] == b["content_hash"]
+    different = normalize_record({**raw, "url": "https://example.com/other"})
+    assert different["content_hash"] != a["content_hash"]
+
+
 def test_is_valid_conversation_rejects_short() -> None:
     assert is_valid_conversation({"source": "reddit", "text": "too short"}) is False
     assert (

@@ -80,10 +80,19 @@ def normalize_record(raw: dict[str, Any]) -> dict[str, Any]:
     extra = raw.get("extra") or raw.get("extra_json") or {}
     if not isinstance(extra, str):
         extra = json.dumps(extra)
+    source = str(raw.get("source") or "unknown")[:64]
+    url = str(raw.get("source_url") or raw.get("url") or "")[:1024]
+    sid = str(raw.get("source_item_id") or raw.get("id") or "")[:256]
+    if sid:
+        digest = content_hash(f"{title} {text}")
+    else:
+        published_key = published.isoformat() if published else ""
+        payload = f"{source}|{url}|{published_key}|{normalize_for_hash(f'{title} {text}')}"
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     return {
-        "source": str(raw.get("source") or "unknown")[:64],
-        "source_item_id": str(raw.get("source_item_id") or raw.get("id") or "")[:256],
-        "source_url": str(raw.get("source_url") or raw.get("url") or "")[:1024],
+        "source": source,
+        "source_item_id": sid,
+        "source_url": url,
         "author_id_hash": hash_author(str(raw.get("author_id") or raw.get("author") or "")),
         "published_at": published,
         "title": title[:512],
@@ -92,7 +101,7 @@ def normalize_record(raw: dict[str, Any]) -> dict[str, Any]:
         "language": str(raw.get("language") or "unknown")[:32],
         "query_used": str(raw.get("query_used") or raw.get("query") or "")[:256],
         "engagement_count": int(raw.get("engagement_count") or raw.get("score") or 0 or 0),
-        "content_hash": content_hash(f"{title} {text}"),
+        "content_hash": digest,
         "extra_json": extra,
     }
 

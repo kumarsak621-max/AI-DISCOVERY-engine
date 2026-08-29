@@ -138,6 +138,7 @@ class RedditCollector(SourceAdapter):
         url = f"https://www.reddit.com{permalink}" if permalink else str(raw.get("url") or "")
         item_id = str(raw.get("id") or "")
         extra = {
+            "source_type": "Reddit",
             "subreddit": raw.get("subreddit") or "",
             "kind": kind,
             "score": int(raw.get("score") or 0),

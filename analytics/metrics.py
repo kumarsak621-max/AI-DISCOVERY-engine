@@ -30,6 +30,13 @@ def load_conversations_frame(session: Session, window_days: int | None = None) -
                 continue
         elif window_days is not None and row.published_at is None:
             continue
+        extra = {}
+        try:
+            extra = json.loads(row.extra_json or "{}")
+        except json.JSONDecodeError:
+            extra = {}
+        if not isinstance(extra, dict):
+            extra = {}
         records.append(
             {
                 "id": row.id,
@@ -49,6 +56,11 @@ def load_conversations_frame(session: Session, window_days: int | None = None) -
                 "content_hash": row.content_hash,
                 "is_syndicated": row.is_syndicated,
                 "analysis_status": row.analysis_status,
+                "rating": extra.get("rating"),
+                "source_type": extra.get("source_type") or row.source,
+                "author_display": extra.get("author_display") or "",
+                "app_id": extra.get("app_id") or extra.get("app_version") or "",
+                "country": extra.get("country") or "",
             }
         )
     return pd.DataFrame.from_records(records)
