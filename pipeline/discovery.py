@@ -238,8 +238,10 @@ def analyze_window(
     gemini_key: str = "",
     progress: ProgressCb | None = None,
     discovery_run: DiscoveryRun | None = None,
+    all_unanalyzed: bool = False,
+    conversation_ids: list[int] | None = None,
 ) -> dict[str, Any]:
-    """Analyze stored records in the publication-date window. Does not collect or invent reviews."""
+    """Analyze stored records. Does not collect or invent reviews."""
     start, end = resolve_window(
         days=window_days,
         months=window_months,
@@ -273,9 +275,13 @@ def analyze_window(
         .filter(Conversation.analysis_status.in_(["pending", "failed"]))
         .all()
     )
-    pending = [
-        c for c in pending if c.published_at is None or in_bounds(c.published_at, start, end)
-    ]
+    if conversation_ids:
+        wanted = set(conversation_ids)
+        pending = [c for c in pending if c.id in wanted]
+    elif not all_unanalyzed:
+        pending = [
+            c for c in pending if c.published_at is None or in_bounds(c.published_at, start, end)
+        ]
     analyzer = ConversationAnalyzer(client)
     analyzed, failed = analyzer.analyze_batch(session, pending)
     _emit(progress, "Theme clustering", 0.65)
@@ -345,6 +351,7 @@ def run_discovery(
     progress: ProgressCb | None = None,
     provider: str = "openrouter",
     gemini_key: str = "",
+    auto_analyze: bool = True,
 ) -> DiscoveryRun:
     start, end = window_bounds(window_days)
     run = DiscoveryRun(
@@ -453,23 +460,29 @@ def run_discovery(
             last_runs[0].records_failed += failed
             session.commit()
 
-        _emit(progress, "AI analysis", 0.5)
-        result = analyze_window(
-            session,
-            api_key=api_key,
-            model=model,
-            temperature=temperature,
-            window_days=window_days,
-            provider=provider,
-            gemini_key=gemini_key,
-            progress=progress,
-            discovery_run=run,
-        )
-        if result["status"] == "error":
-            logger.warning("%s — collected data stored, analysis pending", result.get("error"))
-            run.conversations_analyzed = 0
+        if auto_analyze:
+            _emit(progress, "AI analysis", 0.5)
+            result = analyze_window(
+                session,
+                api_key=api_key,
+                model=model,
+                temperature=temperature,
+                window_days=window_days,
+                provider=provider,
+                gemini_key=gemini_key,
+                progress=progress,
+                discovery_run=run,
+                all_unanalyzed=True,
+            )
+            if result["status"] == "error":
+                logger.warning("%s — collected data stored, analysis pending", result.get("error"))
+                run.conversations_analyzed = 0
+                run.error = str(result.get("error") or "")[:1000]
+            else:
+                run.conversations_analyzed = int(result.get("analyzed") or 0)
         else:
-            run.conversations_analyzed = int(result.get("analyzed") or 0)
+            run.conversations_analyzed = 0
+            _emit(progress, f"{len(new_rows)} new records collected — analysis pending", 0.9)
 
         run.status = "complete"
         run.finished_at = utcnow()

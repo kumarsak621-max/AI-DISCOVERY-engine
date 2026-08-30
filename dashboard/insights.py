@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from analytics.quantify import source_comparison, theme_quantification
+from analytics.quantify import signal_quantification, source_comparison, theme_quantification
 from analytics.records import build_review_records, display_source
 from dashboard import analyze as analyze_page
 from dashboard import blockers as blockers_page
@@ -65,6 +65,14 @@ def render(
         else:
             st.dataframe(themes, use_container_width=True, hide_index=True)
             st.caption("Share is of relevant analyzed records. Values are not invented.")
+
+        section_label("Observed Signals")
+        signals = signal_quantification(records)
+        if signals.empty:
+            empty_state("Insufficient evidence.")
+        else:
+            st.dataframe(signals, use_container_width=True, hide_index=True)
+            st.caption("Potential barriers and drivers calculated from analyzed records. Not causal conversion rates.")
 
         section_label("Top Uncertainties")
         if summary:

@@ -52,6 +52,20 @@ def apply_migrations(engine: Engine) -> None:
         cr_cols = {col["name"] for col in inspector.get_columns("collection_runs")}
         if "requested_records" not in cr_cols:
             statements.append("ALTER TABLE collection_runs ADD COLUMN requested_records INTEGER DEFAULT 0")
+    if "analysis" in tables:
+        analysis_cols = {col["name"] for col in inspector.get_columns("analysis")}
+        analysis_adds = {
+            "theme": "ALTER TABLE analysis ADD COLUMN theme VARCHAR(128) DEFAULT ''",
+            "wishlist_intent": "ALTER TABLE analysis ADD COLUMN wishlist_intent VARCHAR(32) DEFAULT 'unknown'",
+            "uncertainty_level": "ALTER TABLE analysis ADD COLUMN uncertainty_level VARCHAR(32) DEFAULT 'unknown'",
+            "pain_point": "ALTER TABLE analysis ADD COLUMN pain_point TEXT DEFAULT ''",
+            "pain_point_evidence": "ALTER TABLE analysis ADD COLUMN pain_point_evidence TEXT DEFAULT ''",
+            "analysis_provider": "ALTER TABLE analysis ADD COLUMN analysis_provider VARCHAR(64) DEFAULT ''",
+            "analysis_model": "ALTER TABLE analysis ADD COLUMN analysis_model VARCHAR(128) DEFAULT ''",
+        }
+        for name, stmt in analysis_adds.items():
+            if name not in analysis_cols:
+                statements.append(stmt)
     if statements:
         with engine.begin() as conn:
             for stmt in statements:

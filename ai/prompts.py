@@ -35,19 +35,24 @@ Return structured JSON matching this schema:
   "relevance_reason": "string",
   "wishlist_behavior": "explicit_wishlist|save_for_later|cart_as_bookmark|browsing_only|comparison_shortlist|price_watch|occasion_planning|unclear",
   "purchase_intent": "high|medium|low|unknown",
+  "wishlist_intent": "High|Medium|Low|Unknown",
   "purchase_status": "purchased|considering|postponed|abandoned|rejected|waiting|alternative_purchased|unknown",
   "blockers": ["size_uncertainty"],
-  "primary_problem": "short phrase",
+  "theme": "Product Quality|Size / Fit|Pricing|Delivery|Returns / Refund|Customer Support|Product Discovery|Fashion / Styling|Wishlist|Purchase Decision|App Experience|Payment|Availability|Trust|Reviews|Comparison|Other|Unclear",
+  "primary_problem": "short phrase matching the theme evidence",
   "secondary_problems": ["short phrase"],
+  "uncertainty": "High|Medium|Low|Unknown",
   "uncertainty_type": "fit|size|quality|price|styling|reviews|returns|occasion|comparison|availability|trust|none|unknown",
   "uncertainty_text": "what the user does not know",
+  "pain_point": "short evidence-grounded pain point or empty",
+  "pain_point_evidence": "one-sentence evidence summary from the text, or empty",
   "information_sought": ["size/fit information"],
   "leaves_myntra": false,
-  "external_information_source": "Reddit|Instagram|YouTube|Google|friends|influencers|other shopping apps|brand website|physical store|none|unknown",
+  "external_information_source": "Instagram|YouTube|Google|friends|influencers|other shopping apps|brand website|physical store|none|unknown",
   "workaround": "what they actually do, or empty",
   "motivation": "why they wishlisted / saved, or empty",
   "alternative_considered": "string or empty",
-  "user_segment": "behavioral segment or unknown",
+  "user_segment": "First-time Shopper|Frequent Shopper|Price-sensitive Shopper|Fit-sensitive Shopper|Occasion Shopper|Trend-driven Shopper|High-intent Shopper|Comparison Shopper|Bookmarking User|unknown|or another segment only if the text supports it",
   "segment_evidence": "quote or no direct evidence",
   "fashion_category": "string",
   "occasion": "string",
@@ -57,6 +62,16 @@ Return structured JSON matching this schema:
   "funnel_stage": "Discovery|Product Evaluation|Wishlist|High Purchase Intent|Purchase|Wishlist Purchase Within 30 Days|unknown",
   "needs_human_validation": true
 }
+
+Classification rules:
+- Sentiment must come from the actual text: positive, negative, neutral, or mixed.
+- Theme: pick the primary theme supported by the text. Use Unclear if the evidence does not support a theme. Do not force a theme.
+- User segment: infer only when the text supports it. Otherwise unknown. Do not guess.
+- Purchase intent: high only with purchase/order evidence; medium if considering buying; low if casually looking; unknown if no purchase-intent evidence. Commenting alone is not purchase intent.
+- Wishlist intent: High/Medium/Low only with evidence of wishlist, saved, shortlisted, keeping for later, bookmarking, or waiting before purchase. Unknown if no wishlist evidence. Do not assume fashion comments are wishlist behavior.
+- Uncertainty: High/Medium/Low only when the text shows uncertainty (size, fit, quality, price, styling, reviews, trust, returns, delivery, comparison). Unknown if none.
+- Pain point: only if the text states a problem. Do not invent evidence.
+- Do not invent ratings. Google Play ratings are stored separately and must not be guessed.
 
 Relevant if the conversation can provide insight into fashion purchase behavior, Myntra behavior, wishlist/save behavior, product evaluation, purchase hesitation, abandonment, delay, comparison, or information seeking.
 Preserve Hindi/Hinglish quotes exactly. Do not translate evidence_quote.

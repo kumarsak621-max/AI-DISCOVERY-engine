@@ -57,6 +57,16 @@ def render(
     )
     st.session_state["extra_queries"] = [q.strip() for q in (extra or "").splitlines() if q.strip()]
 
+    section_label("Automatic analysis")
+    st.checkbox(
+        "Automatically analyze newly collected records",
+        key="auto_analyze",
+    )
+    st.caption(
+        "When on, Google Play and YouTube records are sent to the selected AI provider after collection. "
+        "When off, the dashboard shows how many records are pending Analyze Feedback."
+    )
+
     section_label("Automatic collection")
     st.selectbox("Interval", list(SCHEDULER_INTERVALS.keys()), key="interval_label")
     hours = SCHEDULER_INTERVALS.get(st.session_state.get("interval_label"), 0)

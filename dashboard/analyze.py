@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from analytics.quantify import source_comparison, source_counts, theme_quantification
+from analytics.quantify import signal_quantification, source_comparison, source_counts, theme_quantification
 from analytics.records import analysis_period_label, build_review_records, month_period_label
 from analytics.trends import monthly_signal_trends, monthly_volume_frame
 from config import WINDOW_PRESETS
@@ -105,6 +105,14 @@ def render(
     else:
         st.dataframe(themes, use_container_width=True, hide_index=True)
         st.caption("Share of relevant records uses only rows labeled relevant_to_wishlist when that set is non-empty.")
+
+    signals = signal_quantification(records)
+    st.markdown("#### Observed signals (analyzed records)")
+    if signals.empty:
+        st.info("Insufficient evidence.")
+    else:
+        st.dataframe(signals, use_container_width=True, hide_index=True)
+        st.caption("Counts are calculated from stored analyzed records. They are observed evidence, not causal claims.")
 
     st.markdown("#### Source comparison (Google Play vs YouTube)")
     compare = source_comparison(records)

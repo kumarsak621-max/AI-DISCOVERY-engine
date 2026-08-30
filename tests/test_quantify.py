@@ -84,6 +84,22 @@ def test_source_comparison_keeps_zero_sources() -> None:
     assert int(manual["Records"]) == 0
 
 
+def test_signal_quantification_uses_analyzed_rows_only() -> None:
+    from analytics.quantify import signal_quantification
+
+    empty = signal_quantification(pd.DataFrame())
+    assert empty.empty
+    frame = _frame()
+    frame["analysis_status"] = "complete"
+    frame["theme"] = ["Size / Fit", "Size / Fit", "Pricing"]
+    frame["wishlist_intent"] = ["High", "Unknown", "Unknown"]
+    frame["uncertainty_level"] = ["High", "Medium", "Low"]
+    table = signal_quantification(frame)
+    assert not table.empty
+    size = table[table["Signal"] == "Size/Fit"].iloc[0]
+    assert int(size["Records"]) == 2
+
+
 def test_retrieved_quantification_matches_rows() -> None:
     quant = retrieved_quantification(_frame())
     assert quant["n"] == 3

@@ -1,6 +1,13 @@
 """Display labels and manual upload parsing — no fabricated product reviews."""
 
-from analytics.records import corpus_stats, display_source, wishlist_intent_label
+from analytics.records import (
+    classification_label,
+    corpus_stats,
+    display_source,
+    rating_display,
+    theme_display,
+    wishlist_intent_label,
+)
 from dashboard.ui import overall_collection_status
 from dashboard.upload import frame_to_records, parse_upload_bytes
 import pandas as pd
@@ -15,9 +22,37 @@ def test_display_source_labels() -> None:
 
 
 def test_wishlist_intent_from_behavior() -> None:
-    assert wishlist_intent_label("explicit_wishlist") == "purchase intent"
-    assert wishlist_intent_label("price_watch") == "bookmarking"
-    assert wishlist_intent_label("") == "not analyzed"
+    assert (
+        wishlist_intent_label(
+            "explicit_wishlist", status="complete", wishlist_intent="High"
+        )
+        == "High"
+    )
+    assert (
+        wishlist_intent_label(
+            "price_watch", status="complete", wishlist_intent="Unknown"
+        )
+        == "Unknown"
+    )
+    assert wishlist_intent_label("", status="pending") == "Not analyzed"
+    assert wishlist_intent_label("", status="failed") == "Analysis failed"
+
+
+def test_rating_display_does_not_invent_youtube_stars() -> None:
+    assert rating_display("youtube", None) == "—"
+    assert rating_display("youtube", 5) == "—"
+    assert rating_display("google_play", 4) == 4
+    assert rating_display("google_play", None) == "Not available"
+
+
+def test_classification_distinguishes_pending_unknown_and_failed() -> None:
+    assert classification_label("pending", None) == "Not analyzed"
+    assert classification_label("complete", "unknown") == "Unknown"
+    assert classification_label("complete", "negative", title_case=True) == "Negative"
+    assert classification_label("failed", "positive") == "Analysis failed"
+    assert theme_display("pending", "", "") == "Not analyzed"
+    assert theme_display("complete", "Size / Fit", "") == "Size / Fit"
+    assert theme_display("complete", "", "") == "Unclear"
 
 
 def test_corpus_stats_from_rows_only() -> None:

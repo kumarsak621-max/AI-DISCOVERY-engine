@@ -45,6 +45,26 @@ def test_schema_rejects_invalid_behavior() -> None:
         ConversationAnalysis.model_validate({"relevant": True, "wishlist_behavior": "not_a_real_label"})
 
 
+def test_schema_normalizes_theme_and_levels() -> None:
+    parsed = ConversationAnalysis.model_validate(
+        {
+            "relevant": True,
+            "theme": "fit",
+            "wishlist_intent": "high",
+            "uncertainty": "medium",
+            "sentiment": "Negative",
+            "user_segment": "unknown",
+            "pain_point": "Size/fit uncertainty",
+        }
+    )
+    assert parsed.theme == "Size / Fit"
+    assert parsed.wishlist_intent == "High"
+    assert parsed.uncertainty == "Medium"
+    assert parsed.sentiment == "negative"
+    assert parsed.user_segment == "unknown"
+    assert parsed.pain_point == "Size/fit uncertainty"
+
+
 def test_blockers_from_comma_string() -> None:
     parsed = ConversationAnalysis.model_validate(
         {"relevant": True, "blockers": "size_uncertainty, waiting_for_price_drop"}

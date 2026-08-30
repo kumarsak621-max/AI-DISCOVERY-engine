@@ -85,12 +85,18 @@ def test_persist_analysis_roundtrip(tmp_path: Path) -> None:
             confidence=0.81,
             needs_human_validation=False,
         )
-        persist_analysis(session, conv, parsed)
+        persist_analysis(session, conv, parsed, provider="Gemini", model="gemini-2.0-flash")
         session.commit()
         row = session.query(Analysis).one()
         assert row.relevant_to_wishlist is True
         assert row.purchase_blocker == "size_uncertainty"
         assert row.confidence == 0.81
+        assert row.theme == "Unclear"
+        assert row.wishlist_intent == "Unknown"
+        assert row.uncertainty_level == "Unknown"
+        assert row.analysis_provider == "Gemini"
+        assert row.analysis_model == "gemini-2.0-flash"
+        assert conv.analysis_status == "complete"
     reset_engine()
 
 

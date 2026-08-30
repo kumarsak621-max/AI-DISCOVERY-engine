@@ -9,8 +9,12 @@ import streamlit as st
 
 from analytics.records import (
     build_review_records,
+    classification_label,
     corpus_stats,
     display_source,
+    rating_display,
+    theme_display,
+    title_level,
     wishlist_intent_label,
 )
 from config import HISTORICAL_WINDOW_MONTHS
@@ -44,22 +48,28 @@ def _recent_table(conversations: pd.DataFrame, analysis: pd.DataFrame, limit: in
         view = view.sort_values("published_at", ascending=False, na_position="last")
     rows = []
     for _, row in view.head(limit).iterrows():
-        rating = row.get("rating")
-        rating_out = rating if pd.notna(rating) and str(rating) not in {"", "None", "nan"} else "—"
-        theme = row.get("primary_problem")
-        sentiment = row.get("sentiment")
-        segment = row.get("user_segment")
-        intent = row.get("purchase_intent")
+        status = row.get("analysis_status")
+        intent_raw = row.get("purchase_intent")
+        if str(status or "").strip().lower() == "complete":
+            purchase = title_level(intent_raw) if not pd.isna(intent_raw) else "Unknown"
+        elif str(status or "").strip().lower() == "failed":
+            purchase = "Analysis failed"
+        else:
+            purchase = "Not analyzed"
         rows.append(
             {
                 "Date": _fmt_dt(row.get("published_at")),
                 "Source": display_source(row.get("source")),
-                "Rating": rating_out,
-                "Theme": theme if theme and str(theme).strip() not in {"", "None", "nan"} else "Not analyzed",
-                "Sentiment": sentiment if sentiment and str(sentiment).strip() not in {"", "None", "nan"} else "Not analyzed",
-                "User Segment": segment if segment and str(segment).strip() not in {"", "None", "nan", "unknown"} else "Not analyzed",
-                "Purchase Intent": intent if intent and str(intent).strip() not in {"", "None", "nan", "unknown"} else "Not analyzed",
-                "Wishlist Intent": wishlist_intent_label(row.get("wishlist_behavior")),
+                "Rating": rating_display(row.get("source"), row.get("rating")),
+                "Theme": theme_display(status, row.get("theme"), row.get("primary_problem")),
+                "Sentiment": classification_label(status, row.get("sentiment"), title_case=True),
+                "User Segment": classification_label(status, row.get("user_segment")),
+                "Purchase Intent": purchase,
+                "Wishlist Intent": wishlist_intent_label(
+                    row.get("wishlist_behavior"),
+                    status=status,
+                    wishlist_intent=row.get("wishlist_intent"),
+                ),
                 "Text": str(row.get("original_text") or row.get("text") or "")[:280],
             }
         )
@@ -82,6 +92,8 @@ def render(
     youtube_configured: bool,
     play_ready: bool = True,
     db_ready: bool = True,
+    analysis_counts: dict | None = None,
+    auto_analyze: bool = True,
 ) -> dict:
     st.subheader("Data Collection Status")
     st.caption(
@@ -213,6 +225,38 @@ def render(
     st.caption(interval_note)
     if run_stats.get("error"):
         st.error(run_stats["error"])
+
+    counts = analysis_counts or {}
+    collected_n = int(counts.get("collected", stats["total"]))
+    analyzed_n = int(counts.get("analyzed", 0))
+    pending_n = int(counts.get("pending", 0))
+    failed_n = int(counts.get("failed", 0))
+    section_label("Analysis Status")
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("Records collected", collected_n)
+    s2.metric("Records analyzed", analyzed_n)
+    s3.metric("Records pending analysis", pending_n)
+    s4.metric("Analysis failures", failed_n)
+    new_n = int(run_stats.get("new") or 0)
+    analyzed_last = int(run_stats.get("analyzed") or 0)
+    if new_n and analyzed_last == 0:
+        st.info(f"{new_n} new records collected — analysis pending")
+        if not auto_analyze:
+            st.caption("Automatic analysis is off. Click Analyze Feedback to classify stored records.")
+    elif pending_n:
+        st.info(f"{pending_n} records pending analysis. Click Analyze Feedback to classify them.")
+    provider = (run_stats.get("ai_provider") or "").strip()
+    model_name = (run_stats.get("ai_model") or "").strip()
+    analyzed_at = run_stats.get("analysis_date") or last_ai
+    if analyzed_n and (provider or model_name or analyzed_at):
+        bits = []
+        if provider:
+            bits.append(f"Provider: {provider}")
+        if model_name:
+            bits.append(f"Model: {model_name}")
+        if analyzed_at:
+            bits.append(f"Analyzed: {analyzed_at}")
+        st.caption(" · ".join(bits))
 
     section_label("Manual Upload")
     st.caption("Upload your own real customer feedback. This does not generate reviews.")

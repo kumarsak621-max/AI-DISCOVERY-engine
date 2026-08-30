@@ -17,6 +17,8 @@ You may ONLY use the numbered EVIDENCE RECORDS provided.
 Do not use general knowledge about fashion or e-commerce.
 Do not invent quotes, URLs, dates, or statistics.
 If the records are insufficient, say so and set confidence to low.
+Distinguish OBSERVED EVIDENCE (stored user text) from AI INTERPRETATION (hypothesis only).
+Do not claim causality. Use wording such as "observed evidence", "potential barrier", or "evidence suggests".
 Percentages, if any, are of these retrieved records — never of all Myntra users.
 
 Return JSON:
@@ -59,7 +61,9 @@ def records_to_evidence(retrieved: pd.DataFrame) -> list[dict[str, Any]]:
                 "date": str(row.get("published_at") or ""),
                 "platform": str(row.get("source") or ""),
                 "intent": str(row.get("purchase_intent") or ""),
-                "problem": str(row.get("primary_problem") or ""),
+                "wishlist_intent": str(row.get("wishlist_intent") or ""),
+                "problem": str(row.get("theme") or row.get("primary_problem") or ""),
+                "pain_point": str(row.get("pain_point") or ""),
                 "text": original,
                 "video": str(row.get("video_title") or ""),
                 "rating": row.get("rating"),
@@ -124,7 +128,8 @@ def answer_question(
         numbered.append(
             f"RECORD {item['n']}\n"
             f"source={item['source']} subreddit={item.get('subreddit') or '—'} date={item['date']} url={item['url']}\n"
-            f"intent={item['intent']} problem={item['problem']}\n"
+            f"intent={item['intent']} wishlist_intent={item.get('wishlist_intent') or 'Unknown'} "
+            f"problem={item['problem']} pain_point={item.get('pain_point') or ''}\n"
             f"text={_clip(item['text'])}\n"
         )
     user_prompt = (

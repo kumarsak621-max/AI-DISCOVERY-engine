@@ -63,13 +63,14 @@ def render(conversations: pd.DataFrame, analysis: pd.DataFrame, window_days: int
     with c4:
         intents = sorted(records["purchase_intent"].dropna().unique().tolist()) if "purchase_intent" in records.columns else []
         intent = st.multiselect("Purchase intent", [s for s in intents if s])
-        wish_intents = st.multiselect("Wishlist intent", ["purchase intent", "bookmarking", "not analyzed"])
+        wish_intents = st.multiselect("Wishlist intent", ["High", "Medium", "Low", "Unknown", "Not analyzed"])
 
     c5, c6, c7, c8 = st.columns(4)
     with c5:
         themes = ["All"]
-        if "primary_problem" in records.columns:
-            themes += sorted({str(x) for x in records["primary_problem"].dropna().tolist() if str(x).strip()})[:40]
+        theme_col = "theme" if "theme" in records.columns and records["theme"].fillna("").astype(str).str.strip().ne("").any() else "primary_problem"
+        if theme_col in records.columns:
+            themes += sorted({str(x) for x in records[theme_col].dropna().tolist() if str(x).strip()})[:40]
         theme = st.selectbox("Theme / pain point", themes)
     with c6:
         rating_opts = []

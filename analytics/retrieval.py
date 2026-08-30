@@ -61,14 +61,18 @@ def retrieve_records(records: pd.DataFrame, question: str, limit: int = 8) -> pd
                 "text",
                 "original_text",
                 "primary_problem",
+                "theme",
+                "pain_point",
                 "uncertainty_type",
                 "uncertainty_text",
+                "uncertainty_level",
                 "purchase_blocker",
                 "motivation",
                 "workaround",
                 "evidence_quote",
                 "user_segment",
                 "fashion_category",
+                "wishlist_intent",
             )
         )
         rtok = _tokens(blob)

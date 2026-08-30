@@ -133,6 +133,7 @@ def _ensure_runtime_config(
     st.session_state.setdefault("extra_queries", [])
     st.session_state.setdefault("interval_label", "Every 24 hours")
     st.session_state.setdefault("interval_hours", 24)
+    st.session_state.setdefault("auto_analyze", True)
 
 
 def _run_collection(
@@ -148,6 +149,7 @@ def _run_collection(
     progress_bar,
     provider: str = "openrouter",
     gemini_key: str = "",
+    auto_analyze: bool = True,
 ):
     def on_progress(message: str, fraction: float) -> None:
         progress_bar.progress(min(max(fraction, 0.0), 1.0), text=message)
@@ -166,6 +168,7 @@ def _run_collection(
             progress=on_progress,
             provider=provider,
             gemini_key=gemini_key,
+            auto_analyze=auto_analyze,
         )
     st.session_state["last_collection_stats"] = {
         "new": int(getattr(run, "conversations_new", 0) or 0),
@@ -192,16 +195,25 @@ def _run_collection(
             if item.get("status") in {"error", "unavailable"}
         ],
         "source_coverage": list(getattr(run, "source_results", None) or []),
+        "ai_provider": getattr(run, "ai_provider", "") or "",
+        "ai_model": getattr(run, "ai_model", "") or "",
+        "analysis_date": str(getattr(run, "last_ai_success_at", "") or ""),
     }
     st.success(
         f"Collection {run.status}. Found {run.conversations_collected}, "
         f"new {run.conversations_new}, duplicates {getattr(run, 'conversations_duplicate', 0)}, "
         f"analyzed {run.conversations_analyzed}."
     )
-    if not api_key.strip() and str(provider).lower() != "gemini":
+    new_n = int(getattr(run, "conversations_new", 0) or 0)
+    analyzed_n = int(getattr(run, "conversations_analyzed", 0) or 0)
+    if new_n and analyzed_n == 0:
+        st.info(f"{new_n} new records collected — analysis pending")
+    if auto_analyze and not api_key.strip() and str(provider).lower() != "gemini":
         st.warning("OpenRouter API key is not configured. Records were stored; AI analysis remains pending.")
-    elif str(provider).lower() == "gemini" and not gemini_key.strip():
+    elif auto_analyze and str(provider).lower() == "gemini" and not gemini_key.strip():
         st.warning("Gemini API key is not configured. Records were stored; AI analysis remains pending.")
+    elif not auto_analyze and new_n:
+        st.caption("Automatic analysis is off. Click Analyze Feedback to classify stored records.")
     return run
 
 
@@ -217,6 +229,7 @@ def _run_analysis(
     window_months: int | None = None,
     range_start=None,
     range_end=None,
+    all_unanalyzed: bool = False,
 ) -> dict:
     def on_progress(message: str, fraction: float) -> None:
         progress_bar.progress(min(max(fraction, 0.0), 1.0), text=message)
@@ -234,6 +247,7 @@ def _run_analysis(
             provider=provider,
             gemini_key=gemini_key.strip(),
             progress=on_progress,
+            all_unanalyzed=all_unanalyzed,
         )
     st.session_state["last_analysis_stats"] = result
     if result.get("status") == "error":
@@ -307,6 +321,7 @@ def main() -> None:
                 progress_bar=bar,
                 provider="openrouter",
                 gemini_key=default_gemini,
+                auto_analyze=True,
             )
         except Exception as exc:
             logger.exception("Cron-triggered collection failed")
@@ -348,6 +363,7 @@ def main() -> None:
         )
         or 0
     )
+    auto_analyze = bool(st.session_state.get("auto_analyze", True))
 
     with session_scope() as session:
         _set_setting(session, "scheduler_interval_hours", str(interval_hours))
@@ -381,6 +397,7 @@ def main() -> None:
                 progress_bar=bar,
                 provider=provider,
                 gemini_key=gemini_key,
+                auto_analyze=auto_analyze,
             )
             st.rerun()
         except Exception as exc:
@@ -410,6 +427,7 @@ def main() -> None:
                     progress_bar=bar,
                     provider=provider,
                     gemini_key=gemini_key,
+                    auto_analyze=auto_analyze,
                 )
             except Exception as exc:
                 logger.exception("Interval collection failed")
@@ -495,6 +513,9 @@ def main() -> None:
                 if item.get("status") in {"error", "unavailable"}
             ],
             "source_coverage": list(getattr(run, "source_results", None) or []),
+            "ai_provider": getattr(run, "ai_provider", "") or "",
+            "ai_model": getattr(run, "ai_model", "") or "",
+            "analysis_date": str(getattr(run, "last_ai_success_at", "") or ""),
         }
     analysis_audit = st.session_state.get("last_analysis_stats") or {}
     if summary and isinstance(summary, dict) and summary.get("audit"):
@@ -512,7 +533,13 @@ def main() -> None:
             + interval_note
         )
 
-    analyze_kwargs = {"window_days": 30, "window_months": None, "range_start": None, "range_end": None}
+    analyze_kwargs = {
+        "window_days": 30,
+        "window_months": None,
+        "range_start": None,
+        "range_end": None,
+        "all_unanalyzed": False,
+    }
 
     if page == "Data Collection Status":
         actions = collection_page.render(
@@ -530,10 +557,21 @@ def main() -> None:
             youtube_configured=youtube_configured,
             play_ready=play_ready,
             db_ready=True,
+            analysis_counts={
+                "collected": int(total_records),
+                "analyzed": int(analyzed),
+                "pending": int(pending_ai),
+                "failed": int(failed_ai),
+            },
+            auto_analyze=auto_analyze,
         ) or {}
         collect_latest = bool(actions.get("collect"))
         collect_historical = bool(actions.get("collect_historical"))
         analyze_now = bool(actions.get("analyze"))
+        if analyze_now:
+            analyze_kwargs["all_unanalyzed"] = True
+            analyze_kwargs["window_months"] = HISTORICAL_WINDOW_MONTHS
+            analyze_kwargs["window_days"] = int(hist_days)
     elif page == "Customer Insights":
         result = insights_page.render(
             conversations_hist,
@@ -592,6 +630,7 @@ def main() -> None:
                 progress_bar=bar,
                 provider=provider,
                 gemini_key=gemini_key,
+                auto_analyze=auto_analyze,
             )
             st.rerun()
         except Exception as exc:
@@ -613,6 +652,7 @@ def main() -> None:
                 progress_bar=bar,
                 provider=provider,
                 gemini_key=gemini_key,
+                auto_analyze=auto_analyze,
             )
             st.rerun()
         except Exception as exc:
@@ -639,6 +679,7 @@ def main() -> None:
                 window_months=analyze_kwargs.get("window_months"),
                 range_start=start_dt,
                 range_end=end_dt,
+                all_unanalyzed=bool(analyze_kwargs.get("all_unanalyzed")),
             )
             st.rerun()
         except Exception as exc:

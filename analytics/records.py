@@ -31,6 +31,8 @@ BOOKMARK_WISHLIST = {
     "browsing_only",
 }
 
+_EMPTY = {"", "none", "nan", "nat", "null", "n/a"}
+
 
 def display_source(source: object) -> str:
     key = str(source or "").strip()
@@ -39,15 +41,112 @@ def display_source(source: object) -> str:
     return DISPLAY_SOURCE.get(key, key)
 
 
-def wishlist_intent_label(behavior: object) -> str:
+def _is_blank(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and pd.isna(value):
+        return True
+    return str(value).strip().lower() in _EMPTY
+
+
+def title_level(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "Unknown"
+    titled = text[:1].upper() + text[1:].lower()
+    if titled in {"High", "Medium", "Low", "Unknown"}:
+        return titled
+    return "Unknown"
+
+
+def title_sentiment(value: object) -> str:
+    text = str(value or "").strip().lower()
+    mapping = {
+        "positive": "Positive",
+        "negative": "Negative",
+        "neutral": "Neutral",
+        "mixed": "Mixed",
+    }
+    return mapping.get(text, str(value).strip())
+
+
+def analysis_status_label(status: object) -> str:
+    value = str(status or "").strip().lower()
+    if value == "complete":
+        return "Analyzed"
+    if value == "failed":
+        return "Analysis failed"
+    return "Not analyzed"
+
+
+def classification_label(
+    status: object,
+    value: object,
+    *,
+    blank_if_analyzed: str = "Unknown",
+    title_case: bool = False,
+) -> str:
+    state = str(status or "").strip().lower()
+    if state == "failed":
+        return "Analysis failed"
+    if state != "complete":
+        return "Not analyzed"
+    if _is_blank(value) or str(value).strip().lower() in {"unknown", "unclear"}:
+        return blank_if_analyzed
+    text = str(value).strip()
+    if title_case:
+        return title_sentiment(text)
+    return text
+
+
+def rating_display(source: object, rating: object) -> object:
+    src = str(source or "").strip()
+    if src == "youtube":
+        return "—"
+    if _is_blank(rating):
+        return "Not available" if src == "google_play" else "—"
+    try:
+        return int(float(rating))
+    except (TypeError, ValueError):
+        return str(rating)
+
+
+def theme_display(status: object, theme: object, primary_problem: object = None) -> str:
+    raw = theme if not _is_blank(theme) else primary_problem
+    state = str(status or "").strip().lower()
+    if state == "failed":
+        return "Analysis failed"
+    if state != "complete":
+        return "Not analyzed"
+    if _is_blank(raw) or str(raw).strip().lower() in {"unknown", "none"}:
+        return "Unclear"
+    return str(raw).strip()
+
+
+def wishlist_intent_label(
+    behavior: object = None,
+    *,
+    status: object = None,
+    wishlist_intent: object = None,
+) -> str:
+    """Display wishlist intent from stored AI classification. Never invents a value."""
+    state = str(status or "").strip().lower()
+    if state == "failed":
+        return "Analysis failed"
+    if wishlist_intent is not None or status is not None:
+        if state != "complete":
+            return "Not analyzed"
+        if _is_blank(wishlist_intent) or str(wishlist_intent).strip().lower() in {"unknown", "unclear"}:
+            return "Unknown"
+        return title_level(wishlist_intent)
     value = str(behavior or "").strip()
     if not value or value.lower() in {"unknown", "unclear", "nan", "none"}:
-        return "not analyzed"
-    if value in PURCHASE_WISHLIST:
-        return "purchase intent"
-    if value in BOOKMARK_WISHLIST:
-        return "bookmarking"
-    return value
+        return "Not analyzed"
+    if value in {"High", "Medium", "Low", "Unknown"}:
+        return value
+    if value.lower() in {"high", "medium", "low", "unknown"}:
+        return title_level(value)
+    return "Unknown"
 
 
 ANALYSIS_COLS = [
@@ -55,11 +154,16 @@ ANALYSIS_COLS = [
     "relevant_to_wishlist",
     "relevance_reason",
     "wishlist_behavior",
+    "wishlist_intent",
     "purchase_intent",
     "purchase_status",
     "primary_problem",
+    "theme",
     "uncertainty_type",
     "uncertainty_text",
+    "uncertainty_level",
+    "pain_point",
+    "pain_point_evidence",
     "purchase_blocker",
     "motivation",
     "workaround",
@@ -70,6 +174,9 @@ ANALYSIS_COLS = [
     "fashion_category",
     "occasion",
     "sentiment",
+    "analysis_provider",
+    "analysis_model",
+    "analyzed_at",
     "evidence_quote",
     "confidence",
     "needs_human_validation",
@@ -258,10 +365,21 @@ def filter_review_records(
             + out.get("purchase_blocker", pd.Series("", index=out.index)).fillna("").astype(str)
         ).str.lower()
         out = out[blob.str.contains(needle, regex=False)]
-    if wishlist_intent and "wishlist_behavior" in out.columns:
+    if wishlist_intent:
         wanted = {str(x) for x in wishlist_intent}
-        labels = out["wishlist_behavior"].map(wishlist_intent_label)
-        out = out[labels.isin(wanted) | out["wishlist_behavior"].isin(wanted)]
+        if "wishlist_intent" in out.columns:
+            labels = out.apply(
+                lambda row: wishlist_intent_label(
+                    row.get("wishlist_behavior"),
+                    status=row.get("analysis_status"),
+                    wishlist_intent=row.get("wishlist_intent"),
+                ),
+                axis=1,
+            )
+            out = out[labels.isin(wanted) | out["wishlist_intent"].astype(str).isin(wanted)]
+        elif "wishlist_behavior" in out.columns:
+            labels = out["wishlist_behavior"].map(wishlist_intent_label)
+            out = out[labels.isin(wanted) | out["wishlist_behavior"].isin(wanted)]
     if keyword and str(keyword).strip():
         needle = str(keyword).strip().lower()
         blob = (

@@ -53,7 +53,14 @@ def analysis_from_dict(payload: dict) -> ConversationAnalysis:
     return ConversationAnalysis.model_validate(payload)
 
 
-def persist_analysis(session: Session, conversation: Conversation, parsed: ConversationAnalysis) -> Analysis:
+def persist_analysis(
+    session: Session,
+    conversation: Conversation,
+    parsed: ConversationAnalysis,
+    *,
+    provider: str = "",
+    model: str = "",
+) -> Analysis:
     blockers = list(parsed.blockers) if parsed.blockers else ["unknown"]
     primary_blocker = blockers[0] if blockers else "unknown"
     row = conversation.analysis
@@ -64,12 +71,17 @@ def persist_analysis(session: Session, conversation: Conversation, parsed: Conve
     row.relevance_reason = parsed.relevance_reason
     row.wishlist_behavior = parsed.wishlist_behavior
     row.purchase_intent = parsed.purchase_intent
+    row.wishlist_intent = parsed.wishlist_intent
     row.purchase_status = parsed.purchase_status
-    row.primary_problem = parsed.primary_problem
+    row.theme = parsed.theme
+    row.primary_problem = parsed.primary_problem or parsed.theme
     row.secondary_problems = json.dumps(parsed.secondary_problems)
     row.uncertainty = parsed.uncertainty_text
     row.uncertainty_type = parsed.uncertainty_type
     row.uncertainty_text = parsed.uncertainty_text
+    row.uncertainty_level = parsed.uncertainty
+    row.pain_point = parsed.pain_point
+    row.pain_point_evidence = parsed.pain_point_evidence
     row.purchase_blocker = primary_blocker
     row.purchase_blockers = json.dumps(blockers)
     row.motivation = parsed.motivation
@@ -83,6 +95,8 @@ def persist_analysis(session: Session, conversation: Conversation, parsed: Conve
     row.fashion_category = parsed.fashion_category
     row.occasion = parsed.occasion
     row.sentiment = parsed.sentiment
+    row.analysis_provider = provider
+    row.analysis_model = model
     row.evidence_quote = parsed.evidence_quote
     row.evidence_type = "verbatim" if parsed.evidence_quote != "no direct evidence" else "none"
     row.confidence = parsed.confidence
@@ -123,7 +137,13 @@ class ConversationAnalyzer:
         for index, conversation in enumerate(conversations, start=1):
             try:
                 parsed = self.analyze_one(conversation)
-                persist_analysis(session, conversation, parsed)
+                persist_analysis(
+                    session,
+                    conversation,
+                    parsed,
+                    provider=str(getattr(self.client, "provider_name", "") or ""),
+                    model=str(getattr(self.client, "model", "") or ""),
+                )
                 session.commit()
                 ok += 1
             except (OpenRouterError, AIProviderError) as exc:
