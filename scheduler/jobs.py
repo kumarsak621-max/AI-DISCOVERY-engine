@@ -45,7 +45,7 @@ def run_job(
         model = os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
     else:
         model = os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
-    enabled = sources or ["reddit", "apify_reddit", "youtube", "web", "app_store", "google_play"]
+    enabled = sources or ["google_play", "youtube"]
     with session_scope() as session:
         run = run_discovery(
             session,
@@ -77,7 +77,7 @@ def main() -> None:
     parser.add_argument("--max-records", type=int, default=200)
     parser.add_argument(
         "--sources",
-        default="reddit,apify_reddit,youtube,web,app_store,google_play",
+        default="google_play,youtube",
         help="Comma-separated source names",
     )
     parser.add_argument("--provider", default=os.getenv("AI_PROVIDER", "openrouter"))

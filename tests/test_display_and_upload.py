@@ -9,7 +9,7 @@ import pandas as pd
 def test_display_source_labels() -> None:
     assert display_source("google_play") == "Google Play"
     assert display_source("youtube") == "YouTube"
-    assert display_source("reddit") == "Reddit"
+    assert display_source("unknown_source") == "unknown_source"
     assert display_source("manual") == "Manual Upload"
     assert display_source("") == "Unknown"
 
@@ -24,13 +24,12 @@ def test_corpus_stats_from_rows_only() -> None:
     frame = pd.DataFrame(
         [
             {"source": "google_play", "published_at": "2026-01-01", "rating": 4},
-            {"source": "reddit", "published_at": "2026-02-01", "rating": None},
+            {"source": "youtube", "published_at": "2026-02-01", "rating": None},
         ]
     )
     stats = corpus_stats(frame)
     assert stats["google_play"] == 1
-    assert stats["reddit"] == 1
-    assert stats["youtube"] == 0
+    assert stats["youtube"] == 1
     assert stats["total"] == 2
     assert stats["average_rating"] == 4.0
     empty = corpus_stats(pd.DataFrame())

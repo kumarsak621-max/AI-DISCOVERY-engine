@@ -15,8 +15,8 @@ def _rows() -> pd.DataFrame:
         [
             {
                 "id": 1,
-                "source": "reddit",
-                "source_url": "https://reddit.com/r/test/1",
+                "source": "google_play",
+                "source_url": "https://play.google.com/store/apps/details?id=com.myntra.android&reviewId=1",
                 "author_id_hash": "aaa",
                 "published_at": now - timedelta(days=2),
                 "collected_at": now,
@@ -28,8 +28,8 @@ def _rows() -> pd.DataFrame:
             },
             {
                 "id": 2,
-                "source": "app_store",
-                "source_url": "https://apps.apple.com/app/id907394059",
+                "source": "youtube",
+                "source_url": "https://www.youtube.com/watch?v=abc",
                 "author_id_hash": "bbb",
                 "published_at": now - timedelta(days=40),
                 "collected_at": now,
@@ -102,7 +102,7 @@ def test_chatbot_without_key_returns_stored_evidence() -> None:
     assert "fit" in result["evidence"][0]["text"].lower()
     assert "OpenRouter" in result["direct_answer"] or "unavailable" in result["direct_answer"].lower() or "not set" in result["direct_answer"].lower()
     assert result["quantification"]["n"] >= 1
-    assert "reddit" in result["source_breakdown"]
+    assert "google_play" in result["source_breakdown"]
 
 
 def test_source_summary_uses_real_counts_including_zeros() -> None:
@@ -110,20 +110,19 @@ def test_source_summary_uses_real_counts_including_zeros() -> None:
     frame = pd.DataFrame(
         [
             {
-                "source": "app_store",
+                "source": "youtube",
                 "published_at": now,
             },
             {
-                "source": "app_store",
+                "source": "youtube",
                 "published_at": now,
             },
         ]
     )
     summary = source_summary(frame)
     by_source = {row["Source"]: row["Records"] for _, row in summary.iterrows()}
-    assert by_source["Apple App Store"] == 2
+    assert by_source["YouTube"] == 2
     assert by_source["Google Play Store"] == 0
-    assert by_source["Web/Fashion Communities"] == 0
 
 
 def test_chatbot_empty_corpus_does_not_invent() -> None:

@@ -1,8 +1,9 @@
 """Collector availability and error isolation — no fake data when a source is blocked."""
 
+from datetime import datetime, timezone
+
 from collectors.app_store import AppStoreCollector
 from collectors.google_play import GooglePlayCollector
-from collectors.reddit import RedditCollector
 from collectors.youtube import YouTubeCollector
 from scheduler.http_endpoint import _authorized
 
@@ -56,53 +57,48 @@ def test_app_store_normalize_keeps_url_and_id() -> None:
     assert extra["app_id"] == "907394059"
 
 
-def test_google_play_listing_without_reviews_is_unavailable(monkeypatch) -> None:
-    collector = GooglePlayCollector()
+def test_google_play_empty_feed_is_zero_not_fake(monkeypatch) -> None:
+    collector = GooglePlayCollector(max_records=5)
     monkeypatch.setattr(collector, "is_available", lambda: (True, ""))
 
-    class Response:
-        status_code = 200
-        text = (
-            '<html><script type="application/ld+json">'
-            '{"@type":"SoftwareApplication","aggregateRating":{"ratingValue":4.2}}'
-            "</script></html>"
-        )
+    def fake_reviews(*_args, **_kwargs):
+        return [], None
 
-        def raise_for_status(self) -> None:
-            return None
-
-    monkeypatch.setattr("collectors.google_play.requests.get", lambda *a, **k: Response())
+    monkeypatch.setattr("google_play_scraper.reviews", fake_reviews)
     records, _failed = collector.collect()
     assert records == []
-    assert collector.status == "unavailable"
-    assert "no individual reviews" in collector.last_error.lower()
+    assert collector.status == "ok"
 
 
-def test_google_play_jsonld_reviews_are_normalized(monkeypatch) -> None:
+def test_google_play_reviews_are_normalized() -> None:
     collector = GooglePlayCollector()
-    html = (
-        '<html><script type="application/ld+json">'
-        '{"@type":"SoftwareApplication","review":[{"reviewBody":"Size chart on Myntra is confusing so I did not buy the wishlisted dress.",'
-        '"author":{"name":"Pat"},"datePublished":"2026-08-20T00:00:00Z",'
-        '"reviewRating":{"ratingValue":2},"url":"https://play.google.com/store/apps/details?id=com.myntra.android&reviewId=abc"}]}'
-        "</script></html>"
+    record = collector.normalize(
+        {
+            "reviewId": "abc123",
+            "userName": "Pat",
+            "content": "Size chart on Myntra is confusing so I did not buy the wishlisted dress.",
+            "score": 2,
+            "at": datetime(2026, 8, 20, tzinfo=timezone.utc),
+            "thumbsUpCount": 1,
+        }
     )
-    raw = collector._reviews_from_jsonld(html)
-    assert len(raw) == 1
-    record = collector.normalize(raw[0])
     assert record["source"] == "google_play"
+    assert record["source_item_id"] == "abc123"
     assert "Size chart" in record["text"]
     extra = __import__("json").loads(record["extra_json"])
     assert extra["source_type"] == "Google Play Store"
     assert extra["rating"] == 2
     assert extra["app_id"] == "com.myntra.android"
-
-
-def test_reddit_collect_without_queries_errors_cleanly() -> None:
-    collector = RedditCollector(queries=[])
-    records = collector.fetch()
-    assert records == []
-    assert collector.status in {"error", "unavailable", "unknown"}
+    again = collector.normalize(
+        {
+            "reviewId": "abc123",
+            "userName": "Pat",
+            "content": "Size chart on Myntra is confusing so I did not buy the wishlisted dress.",
+            "score": 2,
+            "at": datetime(2026, 8, 20, tzinfo=timezone.utc),
+        }
+    )
+    assert again["content_hash"] == record["content_hash"]
 
 
 def test_cron_unauthorized_without_secret(monkeypatch) -> None:

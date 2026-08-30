@@ -467,7 +467,7 @@ def source_health_rows(session: Session, openrouter_configured: bool | None = No
     for run in runs:
         if run.source not in latest_by_source:
             latest_by_source[run.source] = run
-    names = ["google_play", "youtube", "reddit", "apify_reddit", "app_store", "web"]
+    names = ["google_play", "youtube"]
     by_state = {s.source: s for s in states}
     rows = []
     for name in names:
@@ -477,13 +477,7 @@ def source_health_rows(session: Session, openrouter_configured: bool | None = No
         if name == "youtube" and not os.getenv("YOUTUBE_API_KEY", "").strip() and status in {"unknown", ""}:
             status = "not configured"
         last_error = (state.last_error if state and state.last_error else "")[:200]
-        if name == "apify_reddit":
-            label = "Reddit / Apify"
-            if not os.getenv("APIFY_API_TOKEN", "").strip() and status in {"unknown", ""}:
-                status = "not configured"
-                last_error = last_error or "Apify API token is not configured."
-        else:
-            label = name
+        label = "Google Play" if name == "google_play" else "YouTube"
         rows.append(
             {
                 "Source": label,

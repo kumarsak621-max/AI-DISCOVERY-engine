@@ -8,9 +8,6 @@ from processing.dates import utcnow, window_bounds, window_bounds_months
 
 SOURCE_LABELS = [
     ("google_play", "Google Play Store"),
-    ("app_store", "Apple App Store"),
-    ("web", "Web/Fashion Communities"),
-    ("reddit", "Reddit"),
     ("youtube", "YouTube"),
     ("manual", "Manual Upload"),
 ]
@@ -19,10 +16,6 @@ SOURCE_LABELS = [
 DISPLAY_SOURCE = {
     "google_play": "Google Play",
     "youtube": "YouTube",
-    "reddit": "Reddit",
-    "apify_reddit": "Reddit",
-    "app_store": "Apple App Store",
-    "web": "Web",
     "manual": "Manual Upload",
 }
 
@@ -115,7 +108,6 @@ def corpus_stats(conversations: pd.DataFrame) -> dict:
         "total": 0,
         "google_play": 0,
         "youtube": 0,
-        "reddit": 0,
         "manual": 0,
         "sources_active": 0,
         "earliest": None,
@@ -128,7 +120,6 @@ def corpus_stats(conversations: pd.DataFrame) -> dict:
     src = conversations["source"].fillna("") if "source" in conversations.columns else pd.Series([], dtype=str)
     play = int((src == "google_play").sum())
     youtube = int((src == "youtube").sum())
-    reddit = int(src.isin(["reddit", "apify_reddit"]).sum())
     manual = int((src == "manual").sum())
     active = int(src[src.astype(str).str.strip() != ""].nunique()) if len(src) else 0
     ts = pd.to_datetime(conversations.get("published_at"), utc=True, errors="coerce")
@@ -145,7 +136,6 @@ def corpus_stats(conversations: pd.DataFrame) -> dict:
         "total": int(len(conversations)),
         "google_play": play,
         "youtube": youtube,
-        "reddit": reddit,
         "manual": manual,
         "sources_active": active,
         "earliest": earliest,

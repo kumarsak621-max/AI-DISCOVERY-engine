@@ -22,13 +22,9 @@ from analytics.metrics import (
     load_opportunities_frame,
 )
 from analytics.opportunities import build_opportunities
-from collectors.apify_reddit import ApifyRedditCollector
-from collectors.app_store import AppStoreCollector
 from collectors.google_play import GooglePlayCollector
-from collectors.reddit import RedditCollector
-from collectors.web_scraper import WebCollector
 from collectors.youtube import YouTubeCollector
-from config import APIFY_REDDIT_QUERIES, DISCOVERY_QUERIES, YOUTUBE_QUERIES
+from config import YOUTUBE_QUERIES
 from database.models import CollectionRun, Conversation, DiscoveryRun
 from pipeline.state import DbSourceStateStore
 from processing.cleaning import is_valid_conversation, normalize_record
@@ -41,13 +37,10 @@ logger = logging.getLogger(__name__)
 ProgressCb = Callable[[str, float], None]
 
 COLLECTOR_FACTORIES = {
-    "reddit": RedditCollector,
-    "apify_reddit": ApifyRedditCollector,
-    "youtube": YouTubeCollector,
-    "web": WebCollector,
     "google_play": GooglePlayCollector,
-    "app_store": AppStoreCollector,
+    "youtube": YouTubeCollector,
 }
+ACTIVE_SOURCES = ("google_play", "youtube")
 
 
 def _emit(cb: ProgressCb | None, message: str, fraction: float) -> None:
@@ -134,9 +127,7 @@ def prepare_records(raw_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         record = raw if "content_hash" in raw else normalize_record(raw)
         if not record.get("language") or record.get("language") == "unknown":
             record["language"] = detect_language(record.get("text") or "")
-        min_chars = 20 if record.get("source") in {"app_store", "google_play", "youtube", "manual"} else 40
-        if record.get("source") == "reddit":
-            min_chars = 30
+        min_chars = 8 if record.get("source") in {"google_play", "youtube", "manual"} else 40
         if is_valid_conversation(record, min_chars=min_chars):
             normalized.append(record)
     unique, _dupes = deduplicate_records(normalized)
@@ -160,13 +151,7 @@ def collect_source(
         "since": since,
         "until": until,
     }
-    if source_name == "reddit":
-        kwargs["queries"] = list(DISCOVERY_QUERIES) + (extra_queries or [])
-    elif source_name == "apify_reddit":
-        kwargs["queries"] = list(APIFY_REDDIT_QUERIES) + (extra_queries or [])
-        kwargs["api_token"] = os.getenv("APIFY_API_TOKEN", "")
-        kwargs["actor_id"] = os.getenv("APIFY_REDDIT_ACTOR_ID", "") or None
-    elif source_name == "youtube":
+    if source_name == "youtube":
         kwargs["queries"] = list(YOUTUBE_QUERIES)
         kwargs["api_key"] = os.getenv("YOUTUBE_API_KEY", "")
     collector = factory(**kwargs)
@@ -375,25 +360,16 @@ def run_discovery(
         store = DbSourceStateStore(session)
         all_raw: list[dict[str, Any]] = []
         source_results: list[dict[str, Any]] = []
-        sources = enabled_sources or [
-            "reddit",
-            "apify_reddit",
-            "youtube",
-            "web",
-            "app_store",
-            "google_play",
-        ]
+        sources = [s for s in (enabled_sources or list(ACTIVE_SOURCES)) if s in COLLECTOR_FACTORIES]
+        if not sources:
+            sources = list(ACTIVE_SOURCES)
         n = max(len(sources), 1)
         for i, source_name in enumerate(sources):
             if source_name not in COLLECTOR_FACTORIES:
                 continue
             label = {
-                "reddit": "Collecting Reddit",
-                "apify_reddit": "Collecting Reddit via Apify",
                 "youtube": "Collecting YouTube",
-                "web": "Collecting public web sources",
                 "google_play": "Collecting Google Play",
-                "app_store": "Collecting App Store",
             }.get(source_name, f"Collecting {source_name}")
             _emit(progress, label, 0.05 + 0.25 * (i / n))
             since = None if full_refresh else store.get_last_collection_time(source_name)

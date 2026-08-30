@@ -19,14 +19,14 @@ def render(conversations: pd.DataFrame, analysis: pd.DataFrame, window_days: int
     st.caption(analysis_period_label(int(window_days)))
 
     records = build_review_records(conversations, analysis)
+    if not records.empty and "source" in records.columns:
+        records = records[records["source"].isin(["google_play", "youtube", "manual"])]
     counts = source_counts(records)
     st.markdown(f"**Records in explorer frame: {counts.get('Total', 0):,}**")
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2, m3 = st.columns(3)
     m1.metric("Google Play", counts.get("Google Play Store", 0))
     m2.metric("YouTube", counts.get("YouTube", 0))
-    m3.metric("Reddit", counts.get("Reddit", 0))
-    m4.metric("Web communities", counts.get("Web/Fashion Communities", 0))
-    m5.metric("Apple App Store", counts.get("Apple App Store", 0))
+    m3.metric("Manual Upload", counts.get("Manual Upload", 0))
     st.caption("Counts are from the database for the selected research window. Zeros mean none were stored.")
 
     if records.empty:

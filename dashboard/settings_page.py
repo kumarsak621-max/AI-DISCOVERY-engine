@@ -14,7 +14,7 @@ from dashboard.ui import section_label
 from processing.dates import days_covering_months
 
 
-SOURCE_OPTIONS = ["apify_reddit", "youtube", "google_play", "app_store", "reddit", "web"]
+SOURCE_OPTIONS = ["google_play", "youtube"]
 
 
 def render(
@@ -22,8 +22,6 @@ def render(
     default_openrouter_model: str,
     default_gemini_model: str,
     youtube_configured: bool,
-    apify_configured: bool,
-    reddit_oauth: bool,
     openrouter_configured: bool,
     gemini_configured: bool,
 ) -> None:
@@ -34,6 +32,8 @@ def render(
     )
     st.session_state.setdefault("openrouter_model", default_openrouter_model or DEFAULT_MODEL)
     st.session_state.setdefault("gemini_model", default_gemini_model or DEFAULT_GEMINI_MODEL)
+    current = [s for s in (st.session_state.get("enabled_sources") or []) if s in SOURCE_OPTIONS]
+    st.session_state["enabled_sources"] = current or list(SOURCE_OPTIONS)
 
     section_label("AI provider")
     st.radio("AI Provider", ["OpenRouter", "Gemini"], horizontal=True, key="ai_provider_label")
@@ -69,14 +69,7 @@ def render(
             f"Visit-based incremental collection every {hours}h runs when the dashboard is open. "
             f"For true cron, run `python -m scheduler.jobs --window-days {hist_days}`."
         )
-    st.caption(
-        f"YouTube key: {'configured' if youtube_configured else 'not configured'} · "
-        f"Apify Reddit: {'configured' if apify_configured else 'not configured'} · "
-        f"Reddit OAuth: {'configured' if reddit_oauth else 'public JSON'}"
-    )
-    st.caption(
-        "Required secrets: GEMINI_API_KEY, OPENROUTER_API_KEY, YOUTUBE_API_KEY, "
-        "APIFY_API_TOKEN, APIFY_REDDIT_ACTOR_ID."
-    )
+    st.caption(f"YouTube key: {'configured' if youtube_configured else 'not configured'}")
+    st.caption("Required secrets: GEMINI_API_KEY, OPENROUTER_API_KEY, YOUTUBE_API_KEY.")
     _ = openrouter_configured
     _ = gemini_configured

@@ -1,181 +1,193 @@
-"""Google Play reviews collector for the public Myntra listing.
+"""Google Play reviews collector for the public Myntra Android listing.
 
-There is no official third-party Play reviews API.
-robots.txt allows the app listing page but disallows /store/getreviews, /store/xhr, and /_.
-This collector will not call those blocked endpoints. If the allowed listing HTML
-contains no individual reviews, the source is reported Unavailable — never faked.
+Uses the google-play-scraper library, which reads Google Play's public review
+feed (not the listing HTML). Individual review text is stored as returned.
+No reviews are invented when the feed is empty.
 """
 
 from __future__ import annotations
 
-import json
+import hashlib
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlparse
-from urllib.robotparser import RobotFileParser
-
-import requests
 
 from collectors.base import SourceAdapter
-from config import USER_AGENT
-from processing.cleaning import is_valid_conversation, normalize_record
-from processing.dates import is_after, parse_timestamp
+from processing.cleaning import normalize_record, parse_timestamp
 
 logger = logging.getLogger(__name__)
 
 APP_ID = os.getenv("PLAY_STORE_APP_ID", "com.myntra.android")
 PLAY_URL = f"https://play.google.com/store/apps/details?id={APP_ID}&hl=en_IN&gl=IN"
-BLOCKED_PATHS = ("/store/getreviews", "/store/xhr", "/_/")
+PAGE_SIZE = 200
+
+
+def _as_utc(value: Any) -> datetime | None:
+    parsed = value if isinstance(value, datetime) else parse_timestamp(value)
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 class GooglePlayCollector(SourceAdapter):
     name = "google_play"
     requires_credentials = False
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.app_id = os.getenv("PLAY_STORE_APP_ID", APP_ID)
+        self.requested_records = 0
+        self.requested_start: datetime | None = None
+        self.requested_end: datetime | None = None
+        self.earliest_published: datetime | None = None
+        self.latest_published: datetime | None = None
+        self.limitation_note = ""
+
     def is_available(self) -> tuple[bool, str]:
-        parsed = urlparse(PLAY_URL)
-        robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
-        parser = RobotFileParser()
-        parser.set_url(robots_url)
         try:
-            parser.read()
-        except Exception:
-            return False, "Could not read Play Store robots.txt; skipping to avoid violating access rules"
-        if not parser.can_fetch(USER_AGENT, PLAY_URL):
-            return False, "Play Store robots.txt disallows the listing path; collector will not scrape"
-        for path in BLOCKED_PATHS:
-            probe = f"{parsed.scheme}://{parsed.netloc}{path}"
-            if not parser.can_fetch(USER_AGENT, probe):
-                logger.info("Play Store robots.txt disallows %s", path)
+            import google_play_scraper  # noqa: F401
+        except ImportError:
+            return False, "google-play-scraper is not installed."
         return True, ""
 
     def fetch(self) -> list[dict[str, Any]]:
-        available, reason = self.is_available()
-        if not available:
-            self.status = "unavailable"
-            self.last_error = reason
-            logger.info("Google Play collector unavailable: %s", reason)
-            return []
         try:
-            response = requests.get(PLAY_URL, timeout=25, headers={"User-Agent": USER_AGENT})
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            self.status = "error"
-            self.last_error = f"Play listing fetch failed: {exc}"[:400]
-            logger.warning("Google Play listing fetch failed: %s", exc)
-            return []
-
-        reviews = self._reviews_from_jsonld(response.text)
-        if reviews:
-            logger.info("Google Play collector found %s JSON-LD reviews", len(reviews))
-            since = self.since
-            until = self.until
-            kept = []
-            for item in reviews:
-                published = parse_timestamp(item.get("published_at"))
-                if until and published and published > until:
-                    continue
-                if since and published and not is_after(published, since):
-                    continue
-                kept.append(item)
-            return kept[: self.max_records]
-
-        self.status = "unavailable"
-        self.last_error = (
-            "Google Play listing HTML has no individual reviews (JSON-LD has aggregateRating only). "
-            "robots.txt disallows /store/getreviews, /store/xhr, and /_ so those endpoints are not used. "
-            "No fake reviews were generated."
-        )
-        logger.info("Google Play collector unavailable: %s", self.last_error)
-        return []
-
-    def _iter_jsonld(self, data: Any) -> list[dict[str, Any]]:
-        found: list[dict[str, Any]] = []
-        if isinstance(data, list):
-            for item in data:
-                found.extend(self._iter_jsonld(item))
-        elif isinstance(data, dict):
-            found.append(data)
-            if "@graph" in data:
-                found.extend(self._iter_jsonld(data.get("@graph")))
-        return found
-
-    def _reviews_from_jsonld(self, html: str) -> list[dict[str, Any]]:
-        try:
-            from bs4 import BeautifulSoup
+            from google_play_scraper import Sort, reviews as fetch_reviews
         except ImportError:
+            self.status = "unavailable"
+            self.last_error = "google-play-scraper is not installed."
             return []
-        soup = BeautifulSoup(html, "lxml")
-        out: list[dict[str, Any]] = []
-        for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+
+        self.requested_start = self.since
+        self.requested_end = self.until
+        self.requested_records = int(self.max_records or 0)
+        collected: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        token = None
+        reached_source_end = False
+        stopped_at_requested_start = False
+
+        while len(collected) < self.max_records:
+            count = min(PAGE_SIZE, self.max_records - len(collected))
             try:
-                data = json.loads(script.string or "")
-            except (TypeError, json.JSONDecodeError):
-                continue
-            for node in self._iter_jsonld(data):
-                items = node.get("review")
-                if items is None:
+                batch, token = fetch_reviews(
+                    self.app_id,
+                    lang="en",
+                    country="in",
+                    sort=Sort.NEWEST,
+                    count=count,
+                    continuation_token=token,
+                )
+            except Exception as exc:  # noqa: BLE001
+                if collected:
+                    self.limitation_note = (
+                        f"Paging stopped after {len(collected)} reviews: {exc}"
+                    )[:400]
+                    logger.warning("Google Play paging stopped: %s", exc)
+                    break
+                self.status = "error"
+                self.last_error = f"Google Play review fetch failed: {exc}"[:400]
+                logger.warning("Google Play review fetch failed: %s", exc)
+                return []
+
+            if not batch:
+                reached_source_end = True
+                break
+
+            for item in batch:
+                if not isinstance(item, dict):
                     continue
-                if isinstance(items, dict):
-                    items = [items]
-                if not isinstance(items, list):
+                review_id = str(item.get("reviewId") or "").strip()
+                if review_id and review_id in seen:
                     continue
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-                    body = item.get("reviewBody") or item.get("description") or ""
-                    if not str(body).strip():
-                        continue
-                    author = item.get("author")
-                    if isinstance(author, dict):
-                        author_name = author.get("name") or ""
-                    else:
-                        author_name = str(author or "")
-                    rating = None
-                    rating_obj = item.get("reviewRating") or {}
-                    if isinstance(rating_obj, dict):
-                        rating = rating_obj.get("ratingValue")
-                    out.append(
-                        {
-                            "id": str(item.get("@id") or item.get("url") or "")[:256],
-                            "text": str(body),
-                            "title": str(item.get("name") or ""),
-                            "author": author_name,
-                            "published_at": item.get("datePublished") or item.get("dateCreated"),
-                            "rating": rating,
-                            "url": item.get("url") or PLAY_URL,
-                            "language": item.get("inLanguage") or "",
-                        }
-                    )
-        return out
+                if review_id:
+                    seen.add(review_id)
+                published = _as_utc(item.get("at"))
+                if self.until and published and published > _as_utc(self.until):
+                    continue
+                if self.since and published and published < _as_utc(self.since):
+                    stopped_at_requested_start = True
+                    break
+                text = str(item.get("content") or "").strip()
+                if not text:
+                    continue
+                collected.append(item)
+                if self.earliest_published is None or (published and published < self.earliest_published):
+                    self.earliest_published = published
+                if self.latest_published is None or (published and published > self.latest_published):
+                    self.latest_published = published
+                if len(collected) >= self.max_records:
+                    break
+
+            if stopped_at_requested_start or token is None:
+                if token is None:
+                    reached_source_end = True
+                break
+
+        if not collected:
+            self.limitation_note = "No Google Play reviews collected."
+            logger.info("Google Play collector returned 0 reviews for %s", self.app_id)
+            return []
+
+        if self.since and self.earliest_published:
+            requested = _as_utc(self.since)
+            if requested and self.earliest_published > requested:
+                extra = (
+                    f" Stopped at max_records={self.max_records}."
+                    if len(collected) >= self.max_records
+                    else " The public review feed did not return older items."
+                )
+                self.limitation_note = (
+                    "Google Play scraper/source availability limitation. "
+                    f"Requested start {requested.date()} but earliest returned review is "
+                    f"{self.earliest_published.date()}.{extra} "
+                    "Missing history was not fabricated."
+                )
+        logger.info("Google Play collector found %s individual reviews", len(collected))
+        return collected
 
     def normalize(self, raw: dict[str, Any]) -> dict[str, Any]:
-        rating = raw.get("rating")
+        review_id = str(raw.get("reviewId") or raw.get("id") or "").strip()
+        text = str(raw.get("content") or raw.get("text") or "")
+        published = raw.get("at") or raw.get("published_at")
+        rating = raw.get("score") if raw.get("score") is not None else raw.get("rating")
         try:
             rating_int = int(float(rating)) if rating is not None and str(rating) != "" else 0
         except (TypeError, ValueError):
             rating_int = 0
-        return normalize_record(
+        author = str(raw.get("userName") or raw.get("author") or "")
+        url = PLAY_URL
+        if review_id:
+            url = f"{PLAY_URL}&reviewId={review_id}"
+        record = normalize_record(
             {
                 "source": self.name,
-                "source_item_id": str(raw.get("id") or "")[:256],
-                "source_url": raw.get("url") or PLAY_URL,
-                "author_id": raw.get("author") or "",
-                "published_at": raw.get("published_at"),
-                "title": raw.get("title") or "",
-                "text": raw.get("text") or "",
+                "source_item_id": review_id[:256],
+                "source_url": url,
+                "author_id": author,
+                "published_at": published,
+                "title": "",
+                "text": text,
                 "query_used": "Myntra",
-                "language": raw.get("language") or "unknown",
-                "engagement_count": rating_int,
+                "language": "unknown",
+                "engagement_count": int(raw.get("thumbsUpCount") or rating_int or 0),
                 "extra": {
                     "source_type": "Google Play Store",
                     "rating": rating_int or None,
-                    "app_id": APP_ID,
-                    "author_display": raw.get("author") or "",
+                    "app_id": self.app_id,
+                    "author_display": author,
+                    "review_id": review_id,
+                    "app_version": raw.get("reviewCreatedVersion") or raw.get("appVersion") or "",
                 },
             }
         )
+        if review_id:
+            record["content_hash"] = hashlib.sha256(f"google_play|{review_id}".encode("utf-8")).hexdigest()
+        return record
 
     def validate(self, record: dict[str, Any]) -> bool:
-        return is_valid_conversation(record, min_chars=20) and bool(record.get("published_at"))
+        text = str(record.get("text") or "").strip()
+        return bool(record.get("source") == self.name and record.get("source_item_id") and text)

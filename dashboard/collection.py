@@ -38,21 +38,27 @@ def _recent_table(conversations: pd.DataFrame, analysis: pd.DataFrame, limit: in
     if records.empty:
         return pd.DataFrame()
     view = records.copy()
+    if "source" in view.columns:
+        view = view[view["source"].isin(["google_play", "youtube", "manual"])]
     if "published_at" in view.columns:
         view = view.sort_values("published_at", ascending=False, na_position="last")
     rows = []
     for _, row in view.head(limit).iterrows():
         rating = row.get("rating")
         rating_out = rating if pd.notna(rating) and str(rating) not in {"", "None", "nan"} else "—"
+        theme = row.get("primary_problem")
+        sentiment = row.get("sentiment")
+        segment = row.get("user_segment")
+        intent = row.get("purchase_intent")
         rows.append(
             {
                 "Date": _fmt_dt(row.get("published_at")),
                 "Source": display_source(row.get("source")),
                 "Rating": rating_out,
-                "Sentiment": row.get("sentiment") or "not analyzed",
-                "Theme": row.get("primary_problem") or "—",
-                "User Segment": row.get("user_segment") or "—",
-                "Purchase Intent": row.get("purchase_intent") or "not analyzed",
+                "Theme": theme if theme and str(theme).strip() not in {"", "None", "nan"} else "Not analyzed",
+                "Sentiment": sentiment if sentiment and str(sentiment).strip() not in {"", "None", "nan"} else "Not analyzed",
+                "User Segment": segment if segment and str(segment).strip() not in {"", "None", "nan", "unknown"} else "Not analyzed",
+                "Purchase Intent": intent if intent and str(intent).strip() not in {"", "None", "nan", "unknown"} else "Not analyzed",
                 "Wishlist Intent": wishlist_intent_label(row.get("wishlist_behavior")),
                 "Text": str(row.get("original_text") or row.get("text") or "")[:280],
             }
@@ -74,7 +80,6 @@ def render(
     gemini_configured: bool,
     openrouter_configured: bool,
     youtube_configured: bool,
-    apify_configured: bool,
     play_ready: bool = True,
     db_ready: bool = True,
 ) -> dict:
@@ -86,12 +91,13 @@ def render(
 
     stats = corpus_stats(conversations)
     section_label("Source Metrics")
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
     c1.metric("Google Play Reviews", int(stats["google_play"]))
     c2.metric("YouTube Comments", int(stats["youtube"]))
-    c3.metric("Reddit Posts & Comments", int(stats["reddit"]))
-    c4.metric("Total Feedback", int(stats["total"]))
-    if stats["total"] == 0:
+    c3.metric("Total Feedback", int(stats["google_play"]) + int(stats["youtube"]))
+    if stats["google_play"] == 0:
+        st.caption("No Google Play reviews collected.")
+    if int(stats["google_play"]) + int(stats["youtube"]) == 0:
         empty_state("No data collected.")
 
     e1, e2, e3, e4, e5 = st.columns(5)
@@ -105,7 +111,7 @@ def render(
     e5.metric("Sources Active", int(stats["sources_active"]))
 
     section_label("System Readiness")
-    r1, r2, r3, r4, r5, r6 = st.columns(6)
+    r1, r2, r3, r4, r5 = st.columns(5)
     with r1:
         status_pill("Gemini", readiness_state(configured=gemini_configured))
     with r2:
@@ -115,8 +121,6 @@ def render(
     with r4:
         status_pill("YouTube", "READY" if youtube_configured else "NOT CONFIGURED")
     with r5:
-        status_pill("Apify / Reddit", "READY" if apify_configured else "NOT CONFIGURED")
-    with r6:
         status_pill("Database", "READY" if db_ready else "ERROR")
 
     section_label("Data Collection")
@@ -174,7 +178,13 @@ def render(
         status = str(item.get("status") or "—").upper()
         found = item.get("found", 0)
         if status == "OK":
-            st.success(f"{src}: SUCCESS — {found} records in window")
+            if str(item.get("source")) == "google_play" and int(found or 0) == 0:
+                st.success("Google Play: SUCCESS — 0 new reviews")
+                st.caption("No new Google Play reviews found.")
+            else:
+                st.success(f"{src}: SUCCESS — {found} records in window")
+        elif status in {"ERROR", "UNAVAILABLE"}:
+            st.warning(f"{src}: FAILED — {item.get('error') or 'No data collected.'}")
         else:
             st.warning(f"{src}: {status} — {item.get('error') or 'No data collected.'}")
         st.caption(

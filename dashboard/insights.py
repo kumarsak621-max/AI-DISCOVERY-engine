@@ -54,6 +54,8 @@ def render(
     )
 
     records = build_review_records(conversations, analysis)
+    if not records.empty and "source" in records.columns:
+        records = records[records["source"].isin(["google_play", "youtube", "manual"])]
     themes = theme_quantification(records)
 
     with tab_overview:

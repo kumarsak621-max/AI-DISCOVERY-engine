@@ -30,7 +30,6 @@ from analytics.metrics import (
 )
 from config import (
     BUSINESS_GOAL,
-    DEFAULT_APIFY_REDDIT_ACTOR_ID,
     DEFAULT_GEMINI_MODEL,
     DEFAULT_MODEL,
     HISTORICAL_WINDOW_MONTHS,
@@ -82,16 +81,8 @@ def _apply_secrets_to_env() -> None:
         "GEMINI_API_KEY",
         "GEMINI_MODEL",
         "YOUTUBE_API_KEY",
-        "APIFY_API_TOKEN",
-        "APIFY_REDDIT_ACTOR_ID",
-        "APIFY_REDDIT_SUBREDDITS",
-        "REDDIT_CLIENT_ID",
-        "REDDIT_CLIENT_SECRET",
-        "REDDIT_USER_AGENT",
         "CRON_SECRET",
         "PLAY_STORE_APP_ID",
-        "APP_STORE_APP_ID",
-        "APP_STORE_COUNTRY",
     ):
         val = _secret(name)
         if val and not os.getenv(name, "").strip():
@@ -129,7 +120,7 @@ def _ensure_runtime_config(
 ) -> None:
     st.session_state.setdefault(
         "enabled_sources",
-        ["apify_reddit", "youtube", "google_play", "app_store", "reddit", "web"],
+        ["google_play", "youtube"],
     )
     st.session_state.setdefault("max_records", 200)
     st.session_state.setdefault("ai_provider_label", "OpenRouter")
@@ -282,11 +273,9 @@ def main() -> None:
     default_model = _secret("OPENROUTER_MODEL", DEFAULT_MODEL)
     default_gemini_model = _secret("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
     youtube_configured = bool(_secret("YOUTUBE_API_KEY"))
-    apify_configured = bool(
-        _secret("APIFY_API_TOKEN")
-        and (_secret("APIFY_REDDIT_ACTOR_ID") or DEFAULT_APIFY_REDDIT_ACTOR_ID)
-    )
-    reddit_oauth = bool(_secret("REDDIT_CLIENT_ID") and _secret("REDDIT_CLIENT_SECRET"))
+    from collectors.google_play import GooglePlayCollector
+
+    play_ready = GooglePlayCollector().is_available()[0]
     cron_secret = _secret("CRON_SECRET")
     _ensure_runtime_config(
         default_key=default_key,
@@ -307,7 +296,7 @@ def main() -> None:
         bar = st.progress(0.0, text="Cron-triggered collection…")
         try:
             _run_collection(
-                enabled=["reddit", "apify_reddit", "youtube", "web", "app_store", "google_play"],
+                enabled=["google_play", "youtube"],
                 max_records=200,
                 model=default_model,
                 temperature=0.1,
@@ -338,7 +327,10 @@ def main() -> None:
         st.caption(f"Historical window: last {HISTORICAL_WINDOW_MONTHS} months ({hist_start.date()} → {hist_end.date()})")
         st.caption(BUSINESS_GOAL)
 
-    enabled = list(st.session_state.get("enabled_sources") or ["apify_reddit", "youtube", "google_play"])
+    enabled = [s for s in (st.session_state.get("enabled_sources") or []) if s in {"google_play", "youtube"}]
+    if not enabled:
+        enabled = ["google_play", "youtube"]
+        st.session_state["enabled_sources"] = enabled
     max_records = int(st.session_state.get("max_records", 200))
     ai_provider_label = st.session_state.get("ai_provider_label", "OpenRouter")
     provider = "gemini" if ai_provider_label == "Gemini" else "openrouter"
@@ -368,10 +360,6 @@ def main() -> None:
         analyzed = session.query(Conversation).filter(Conversation.analysis_status == "complete").count()
         total_records = session.query(Conversation).count()
         health = source_health_rows(session, openrouter_configured=bool(api_key.strip()))
-        play_count = session.query(Conversation).filter(Conversation.source == "google_play").count()
-        youtube_count = session.query(Conversation).filter(Conversation.source == "youtube").count()
-        reddit_count = session.query(Conversation).filter(Conversation.source == "reddit").count()
-
     needs_first_run = collection_count == 0
     skip_auto = os.getenv("SKIP_AUTO_COLLECTION", "").strip().lower() in {"1", "true", "yes"}
     if needs_first_run and skip_auto:
@@ -540,8 +528,7 @@ def main() -> None:
             gemini_configured=bool(gemini_key.strip()),
             openrouter_configured=bool(api_key.strip()),
             youtube_configured=youtube_configured,
-            apify_configured=apify_configured,
-            play_ready=True,
+            play_ready=play_ready,
             db_ready=True,
         ) or {}
         collect_latest = bool(actions.get("collect"))
@@ -586,8 +573,6 @@ def main() -> None:
             default_openrouter_model=default_model,
             default_gemini_model=default_gemini_model,
             youtube_configured=youtube_configured,
-            apify_configured=apify_configured,
-            reddit_oauth=reddit_oauth,
             openrouter_configured=bool(api_key.strip()),
             gemini_configured=bool(gemini_key.strip()),
         )

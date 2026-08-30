@@ -12,7 +12,7 @@ def _frame() -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
-                "source": "app_store",
+                "source": "google_play",
                 "primary_problem": "fit uncertainty",
                 "relevant_to_wishlist": True,
                 "sentiment": "negative",
@@ -24,7 +24,7 @@ def _frame() -> pd.DataFrame:
                 "published_at": now,
             },
             {
-                "source": "app_store",
+                "source": "google_play",
                 "primary_problem": "fit uncertainty",
                 "relevant_to_wishlist": True,
                 "sentiment": "negative",
@@ -54,10 +54,9 @@ def _frame() -> pd.DataFrame:
 def test_source_counts_from_rows() -> None:
     counts = source_counts(_frame())
     assert counts["Total"] == 3
-    assert counts["Apple App Store"] == 2
+    assert counts["Google Play Store"] == 2
     assert counts["YouTube"] == 1
-    assert counts["Google Play Store"] == 0
-    assert counts["Reddit"] == 0
+    assert counts["Manual Upload"] == 0
 
 
 def test_theme_share_is_of_relevant_records() -> None:
@@ -65,7 +64,7 @@ def test_theme_share_is_of_relevant_records() -> None:
     fit = table[table["Theme"] == "fit uncertainty"].iloc[0]
     assert int(fit["Records"]) == 2
     assert float(fit["Share of relevant records %"]) == 66.7
-    assert int(fit["Apple App Store"]) == 2
+    assert int(fit["Google Play Store"]) == 2
     assert int(fit["YouTube"]) == 0
 
 
@@ -79,14 +78,14 @@ def test_empty_quantification_is_empty_not_fake() -> None:
 def test_source_comparison_keeps_zero_sources() -> None:
     table = source_comparison(_frame())
     play = table[table["Source"] == "Google Play Store"].iloc[0]
-    assert int(play["Records"]) == 0
-    app = table[table["Source"] == "Apple App Store"].iloc[0]
-    assert int(app["Records"]) == 2
-    assert app["Top theme"] == "fit uncertainty"
+    assert int(play["Records"]) == 2
+    assert play["Top theme"] == "fit uncertainty"
+    manual = table[table["Source"] == "Manual Upload"].iloc[0]
+    assert int(manual["Records"]) == 0
 
 
 def test_retrieved_quantification_matches_rows() -> None:
     quant = retrieved_quantification(_frame())
     assert quant["n"] == 3
-    assert quant["sources"]["app_store"] == 2
+    assert quant["sources"]["google_play"] == 2
     assert quant["themes"]["fit uncertainty"] == 2

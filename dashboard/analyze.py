@@ -59,6 +59,8 @@ def render(
     st.caption(period_label)
 
     records = build_review_records(conversations, analysis)
+    if not records.empty and "source" in records.columns:
+        records = records[records["source"].isin(["google_play", "youtube", "manual"])]
     counts = source_counts(records)
     f1, f2, f3, f4 = st.columns(4)
     f1.metric("Last collection", str(last_collection or "Never"))
@@ -92,12 +94,9 @@ def render(
         }
 
     st.markdown("#### Source mix (database)")
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2 = st.columns(2)
     c1.metric("Google Play", counts.get("Google Play Store", 0))
     c2.metric("YouTube", counts.get("YouTube", 0))
-    c3.metric("Reddit", counts.get("Reddit", 0))
-    c4.metric("Web communities", counts.get("Web/Fashion Communities", 0))
-    c5.metric("Apple App Store", counts.get("Apple App Store", 0))
 
     themes = theme_quantification(records)
     st.markdown("#### Quantified themes")
@@ -107,7 +106,7 @@ def render(
         st.dataframe(themes, use_container_width=True, hide_index=True)
         st.caption("Share of relevant records uses only rows labeled relevant_to_wishlist when that set is non-empty.")
 
-    st.markdown("#### Source comparison (Google Play vs YouTube and others)")
+    st.markdown("#### Source comparison (Google Play vs YouTube)")
     compare = source_comparison(records)
     if compare.empty:
         empty_state("No real records were collected from this source during the selected period.")
