@@ -134,7 +134,7 @@ def prepare_records(raw_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         record = raw if "content_hash" in raw else normalize_record(raw)
         if not record.get("language") or record.get("language") == "unknown":
             record["language"] = detect_language(record.get("text") or "")
-        min_chars = 20 if record.get("source") in {"app_store", "google_play", "youtube"} else 40
+        min_chars = 20 if record.get("source") in {"app_store", "google_play", "youtube", "manual"} else 40
         if record.get("source") == "reddit":
             min_chars = 30
         if is_valid_conversation(record, min_chars=min_chars):
@@ -165,7 +165,7 @@ def collect_source(
     elif source_name == "apify_reddit":
         kwargs["queries"] = list(APIFY_REDDIT_QUERIES) + (extra_queries or [])
         kwargs["api_token"] = os.getenv("APIFY_API_TOKEN", "")
-        kwargs["actor_id"] = os.getenv("APIFY_REDDIT_ACTOR_ID", "")
+        kwargs["actor_id"] = os.getenv("APIFY_REDDIT_ACTOR_ID", "") or None
     elif source_name == "youtube":
         kwargs["queries"] = list(YOUTUBE_QUERIES)
         kwargs["api_key"] = os.getenv("YOUTUBE_API_KEY", "")

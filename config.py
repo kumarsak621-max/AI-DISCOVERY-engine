@@ -22,6 +22,7 @@ DEFAULT_TEMPERATURE = 0.1
 DEFAULT_MAX_RECORDS = 200
 DEFAULT_RESEARCH_WINDOW_DAYS = 30
 HISTORICAL_WINDOW_MONTHS = 30
+DEFAULT_APIFY_REDDIT_ACTOR_ID = "harshmaur/reddit-scraper"
 
 WINDOW_PRESETS: dict[str, dict[str, int]] = {
     "Last 30 days": {"days": 30},
@@ -108,18 +109,23 @@ FASHION_QUERIES: list[str] = [
 ]
 
 YOUTUBE_QUERIES: list[str] = [
+    "Myntra",
     "Myntra review",
     "Myntra shopping",
     "Myntra fashion",
+    "Myntra experience",
     "Myntra haul",
     "Myntra shopping experience",
     "Myntra problems",
     "Myntra quality",
     "Myntra size",
+    "Myntra fit",
     "Myntra fitting",
     "Myntra return",
+    "Myntra returns",
     "Myntra delivery",
     "Myntra wishlist",
+    "online fashion shopping",
     "online fashion shopping problems",
     "online fashion fit problems",
     "online fashion size problems",
@@ -141,6 +147,7 @@ APIFY_REDDIT_QUERIES: list[str] = [
     "Myntra delivery",
     "Myntra refund",
     "Myntra wishlist",
+    "Myntra purchase",
     "Myntra wishlist purchase",
     "Myntra fashion",
     "Myntra clothes",
@@ -150,6 +157,8 @@ APIFY_REDDIT_QUERIES: list[str] = [
     "online fashion fit",
     "online fashion purchase",
     "online shopping fashion problems",
+    "fashion shopping India",
+    "online shopping problems",
 ]
 
 # Public community names only. Override with APIFY_REDDIT_SUBREDDITS (comma-separated).

@@ -66,7 +66,7 @@ def render(
     f3.metric("Records in view", counts.get("Total", 0))
     f4.metric("New records (last run)", (last_stats or {}).get("new", "—"))
 
-    analyze = st.button("Analyze Reviews", type="primary", key="analyze_page_run")
+    analyze = st.button("Analyze Feedback", type="primary", key="analyze_page_run")
     st.caption("Loads stored records in the selected publication-date range and batches them to the selected AI provider.")
 
     audit = audit or (last_stats or {}).get("analysis_audit") or {}

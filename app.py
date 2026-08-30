@@ -19,7 +19,6 @@ from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
 
-from analytics.brief import brief_to_pdf_bytes
 from analytics.metrics import (
     build_discovery_summary,
     latest_run,
@@ -31,36 +30,19 @@ from analytics.metrics import (
 )
 from config import (
     BUSINESS_GOAL,
+    DEFAULT_APIFY_REDDIT_ACTOR_ID,
     DEFAULT_GEMINI_MODEL,
     DEFAULT_MODEL,
-    DEFAULT_RESEARCH_WINDOW_DAYS,
-    DISCLAIMER,
     HISTORICAL_WINDOW_MONTHS,
     SCHEDULER_INTERVALS,
 )
-from dashboard import blockers as blockers_page
-from dashboard import brief as brief_page
-from dashboard import comparison as comparison_page
-from dashboard import evidence as evidence_page
-from dashboard import executive as executive_page
-from dashboard import part1 as part1_page
-from dashboard import problems as problems_page
-from dashboard import segments as segments_page
-from dashboard import uncertainty as uncertainty_page
-from dashboard import wishlist as wishlist_page
-from dashboard import workarounds as workarounds_page
-from dashboard import analyze as analyze_page
 from dashboard import ask as ask_page
-from dashboard import analysis30 as analysis30_page
 from dashboard import collection as collection_page
-from dashboard import collection_runs as collection_runs_page
 from dashboard import insights as insights_page
-from dashboard import last30 as last30_page
-from dashboard import metric_decomp as metric_decomp_page
 from dashboard import opportunities_ui as opportunities_page
-from dashboard import overview as overview_page
 from dashboard import reviews as reviews_page
-from dashboard.ui import banner
+from dashboard import settings_page
+from dashboard.ui import banner, hero, inject_theme
 from database.db import init_db, session_scope
 from database.models import AppSetting, CollectionRun, Conversation
 from pipeline.discovery import analyze_window, run_discovery
@@ -73,28 +55,12 @@ logging.basicConfig(
 logger = logging.getLogger("myntra_discovery")
 
 PAGES = [
-    "Dashboard",
-    "Review Explorer",
-    "Analyze",
-    "Opportunity Areas",
-    "Metric Decomposition",
-    "Ask AI",
-    "Collection Runs",
-    "Last 30 Days",
-    "30-Day Analysis",
-    "Data Collection",
-    "AI Insights",
-    "Part 1 — AI Discovery Answers",
-    "Executive Discovery",
-    "Problem Landscape",
-    "Wishlist Behavior",
-    "Purchase Blockers",
-    "Uncertainty Map",
-    "Comparison Behavior",
-    "External Information Seeking",
-    "Segment Explorer",
-    "Evidence Explorer",
-    "AI Research Brief",
+    "Data Collection Status",
+    "Customer Insights",
+    "Opportunity Explorer",
+    "Feedback Explorer",
+    "AI Product Manager Chatbot",
+    "Settings",
 ]
 
 
@@ -152,6 +118,30 @@ def _set_setting(session, key: str, value: str) -> None:
         session.add(AppSetting(key=key, value=value))
     else:
         row.value = value
+
+
+def _ensure_runtime_config(
+    *,
+    default_key: str,
+    default_gemini: str,
+    default_model: str,
+    default_gemini_model: str,
+) -> None:
+    st.session_state.setdefault(
+        "enabled_sources",
+        ["apify_reddit", "youtube", "google_play", "app_store", "reddit", "web"],
+    )
+    st.session_state.setdefault("max_records", 200)
+    st.session_state.setdefault("ai_provider_label", "OpenRouter")
+    st.session_state.setdefault("openrouter_model", default_model)
+    st.session_state.setdefault("gemini_model", default_gemini_model)
+    st.session_state.setdefault("temperature", 0.1)
+    st.session_state.setdefault("openrouter_key", default_key)
+    st.session_state.setdefault("gemini_key", default_gemini)
+    st.session_state.setdefault("extra_queries_text", "")
+    st.session_state.setdefault("extra_queries", [])
+    st.session_state.setdefault("interval_label", "Every 24 hours")
+    st.session_state.setdefault("interval_hours", 24)
 
 
 def _run_collection(
@@ -270,27 +260,20 @@ def _run_analysis(
 
 def main() -> None:
     st.set_page_config(
-        page_title="Myntra AI Wishlist Conversion Discovery Engine",
+        page_title="Myntra AI Discovery Engine",
         page_icon="🛍️",
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    st.markdown(
-        """
-<style>
-    .stApp { background: #fff8f9; }
-    h1, h2, h3 { color: #3e2329 !important; }
-    div[data-testid="stMetricValue"] { color: #FF3F6C; }
-    .block-container { padding-top: 1.2rem; }
-</style>
-""",
-        unsafe_allow_html=True,
-    )
+    inject_theme()
     _init()
     _apply_secrets_to_env()
 
-    st.title("Myntra AI Wishlist Conversion Discovery Engine")
-    st.markdown("**Live public conversation intelligence — historical window last 30 months + latest collection**")
+    hero(
+        "Myntra AI Discovery Engine",
+        "AI-powered customer intelligence for Product Managers — "
+        "automatically collect, analyze and discover insights from real user feedback.",
+    )
     st.markdown(f"**Business Goal:** {BUSINESS_GOAL}")
     banner()
 
@@ -299,9 +282,18 @@ def main() -> None:
     default_model = _secret("OPENROUTER_MODEL", DEFAULT_MODEL)
     default_gemini_model = _secret("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
     youtube_configured = bool(_secret("YOUTUBE_API_KEY"))
-    apify_configured = bool(_secret("APIFY_API_TOKEN") and _secret("APIFY_REDDIT_ACTOR_ID"))
+    apify_configured = bool(
+        _secret("APIFY_API_TOKEN")
+        and (_secret("APIFY_REDDIT_ACTOR_ID") or DEFAULT_APIFY_REDDIT_ACTOR_ID)
+    )
     reddit_oauth = bool(_secret("REDDIT_CLIENT_ID") and _secret("REDDIT_CLIENT_SECRET"))
     cron_secret = _secret("CRON_SECRET")
+    _ensure_runtime_config(
+        default_key=default_key,
+        default_gemini=default_gemini,
+        default_model=default_model,
+        default_gemini_model=default_gemini_model,
+    )
 
     collect_qp = st.query_params.get("collect", "")
     token_qp = st.query_params.get("token", "")
@@ -332,54 +324,38 @@ def main() -> None:
             st.error(f"Cron-triggered collection failed: {exc}")
         st.stop()
 
+    hist_start, hist_end = window_bounds_months(HISTORICAL_WINDOW_MONTHS)
+    hist_days = days_covering_months(HISTORICAL_WINDOW_MONTHS)
+    window_days = 30
+
     with st.sidebar:
-        st.header("Collection")
-        hist_start, hist_end = window_bounds_months(HISTORICAL_WINDOW_MONTHS)
-        hist_days = days_covering_months(HISTORICAL_WINDOW_MONTHS)
-        st.caption(
-            f"Historical collection window: **last {HISTORICAL_WINDOW_MONTHS} months** "
-            f"({hist_start.date()} → {hist_end.date()}). Dates are not hardcoded."
-        )
-        st.caption("Window uses **publication date**, not collection date. Latest collection appends new records.")
-        window_days = 30
-        st.caption(f"Default **analysis** window: last {window_days} days (wishlist→purchase metric).")
-
-        enabled = st.multiselect(
-            "Sources",
-            ["reddit", "apify_reddit", "youtube", "web", "app_store", "google_play"],
-            default=["apify_reddit", "youtube", "google_play", "app_store", "reddit", "web"],
-        )
-        max_records = st.selectbox("Max records per source", [100, 200, 500, 1000], index=1)
-        ai_provider_label = st.radio("AI Provider", ["OpenRouter", "Gemini"], horizontal=True)
-        provider = "gemini" if ai_provider_label == "Gemini" else "openrouter"
-        openrouter_model = st.text_input("OpenRouter model", value=default_model)
-        gemini_model = st.text_input("Gemini model", value=default_gemini_model)
-        model = gemini_model.strip() if provider == "gemini" else openrouter_model.strip()
-        temperature = st.slider("Temperature", 0.0, 1.0, 0.1, 0.05)
-        api_key = st.text_input("OpenRouter API key", value=default_key, type="password")
-        gemini_key = st.text_input("Gemini API key", value=default_gemini, type="password")
-        extra_q = st.text_area("Additional search queries (one per line)", height=70)
-        extra_queries = [q.strip() for q in (extra_q or "").splitlines() if q.strip()]
-
-        run_now = st.button("Collect Latest Reviews", type="primary", use_container_width=True, key="sidebar_collect_latest")
-        full_refresh = st.button("Full 30-Month Refresh", use_container_width=True, key="sidebar_full_refresh")
-
+        st.markdown("**Myntra AI Discovery Engine**")
+        st.caption("Customer intelligence for Product Managers")
+        if "nav_page" not in st.session_state:
+            st.session_state["nav_page"] = PAGES[0]
+        page = st.radio("Navigation", PAGES, key="nav_page")
         st.divider()
-        st.subheader("Automatic collection")
-        interval_label = st.selectbox("Interval", list(SCHEDULER_INTERVALS.keys()), index=3)
-        interval_hours = SCHEDULER_INTERVALS[interval_label]
-        st.caption(
-            "Streamlit has no persistent background worker. Interval collection runs when the "
-            "dashboard is open. For true cron, run `python -m scheduler.jobs --window-days "
-            f"{hist_days}` (Render Cron Job)."
+        st.caption(f"Historical window: last {HISTORICAL_WINDOW_MONTHS} months ({hist_start.date()} → {hist_end.date()})")
+        st.caption(BUSINESS_GOAL)
+
+    enabled = list(st.session_state.get("enabled_sources") or ["apify_reddit", "youtube", "google_play"])
+    max_records = int(st.session_state.get("max_records", 200))
+    ai_provider_label = st.session_state.get("ai_provider_label", "OpenRouter")
+    provider = "gemini" if ai_provider_label == "Gemini" else "openrouter"
+    openrouter_model = str(st.session_state.get("openrouter_model") or default_model)
+    gemini_model = str(st.session_state.get("gemini_model") or default_gemini_model)
+    model = gemini_model.strip() if provider == "gemini" else openrouter_model.strip()
+    temperature = float(st.session_state.get("temperature", 0.1))
+    api_key = str(st.session_state.get("openrouter_key") or "")
+    gemini_key = str(st.session_state.get("gemini_key") or "")
+    extra_queries = list(st.session_state.get("extra_queries") or [])
+    interval_hours = int(
+        SCHEDULER_INTERVALS.get(
+            st.session_state.get("interval_label"),
+            st.session_state.get("interval_hours") or 0,
         )
-        if interval_hours == 0:
-            st.info("Automatic collection is **not** active (manual only).")
-        else:
-            st.info(
-                f"Visit-based incremental collection every {interval_hours}h is enabled. "
-                "It is not a background daemon."
-            )
+        or 0
+    )
 
     with session_scope() as session:
         _set_setting(session, "scheduler_interval_hours", str(interval_hours))
@@ -423,26 +399,6 @@ def main() -> None:
             logger.exception("First-run collection failed")
             st.error(f"First-run collection failed: {exc}")
 
-    if run_now or full_refresh:
-        bar = st.progress(0.0, text="Starting collection…")
-        try:
-            _run_collection(
-                enabled=enabled,
-                max_records=int(max_records),
-                model=model,
-                temperature=temperature,
-                api_key=api_key,
-                window_days=int(hist_days),
-                full_refresh=bool(full_refresh) or needs_first_run,
-                extra_queries=extra_queries,
-                progress_bar=bar,
-                provider=provider,
-                gemini_key=gemini_key,
-            )
-        except Exception as exc:
-            logger.exception("Collection failed")
-            st.error(f"Collection failed: {exc}")
-
     if interval_hours and last_collection:
         last = last_collection
         if last.tzinfo is None:
@@ -471,38 +427,15 @@ def main() -> None:
                 logger.exception("Interval collection failed")
                 st.warning(f"Interval collection failed: {exc}")
 
-    def _status(ok: bool, detail: str) -> str:
-        return f"{'Connected' if ok else 'Error'} — {detail}"
-
-    gemini_status = "Connected" if gemini_key.strip() else "Not configured"
-    or_status = "Connected" if api_key.strip() else "Not configured"
-    yt_status = "Connected" if youtube_configured else "Not configured (YOUTUBE_API_KEY)"
-    rd_status = "OAuth configured" if reddit_oauth else "Public JSON (no OAuth keys)"
-    apify_status = "Configured" if apify_configured else "Not configured (APIFY_API_TOKEN / APIFY_REDDIT_ACTOR_ID)"
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Data freshness", str(last_collection or "Never"))
-    m2.metric("Last collection", str(last_collection or "Never"))
-    m3.metric("Last AI analysis", str(last_ai or "Never"))
-    m4.metric("Historical window", f"{HISTORICAL_WINDOW_MONTHS} months")
-
-    st.caption(
-        f"AI provider: {ai_provider_label} · OpenRouter: {or_status} · Gemini: {gemini_status} · "
-        f"Reddit JSON: {rd_status} · Reddit/Apify: {apify_status} · YouTube: {yt_status} · "
-        f"Analyzed {analyzed} · Pending {pending_ai} · Failed {failed_ai}"
-    )
-
-    with st.expander("Source health", expanded=needs_first_run):
-        st.dataframe(pd.DataFrame(health), use_container_width=True, hide_index=True)
-        st.caption("Unavailable sources are reported honestly — this app never fabricates reviews.")
-
     with session_scope() as session:
+        conversations_all = load_conversations_frame(session)
+        analysis_all = load_analysis_frame(session)
         conversations_hist = load_conversations_frame(session, window_days=int(hist_days))
         analysis_hist = load_analysis_frame(session, window_days=int(hist_days))
         conversations_30 = load_conversations_frame(session, window_days=30)
         analysis_30 = load_analysis_frame(session, window_days=30)
-        conversations = conversations_hist
-        analysis = analysis_hist
+        conversations = conversations_all
+        analysis = analysis_all
         themes = load_themes_frame(session)
         opportunities = load_opportunities_frame(session)
         run = latest_run(session)
@@ -516,68 +449,36 @@ def main() -> None:
         elif not analysis.empty:
             summary = build_discovery_summary(conversations, analysis, opportunities)
 
-    if "nav_page" not in st.session_state:
-        st.session_state["nav_page"] = "Dashboard"
-
-    page = st.radio(
-        "Pages",
-        PAGES,
-        horizontal=True,
-        index=PAGES.index(st.session_state.get("nav_page", "Dashboard"))
-        if st.session_state.get("nav_page") in PAGES
-        else 0,
-        key="page_radio",
-    )
-    st.session_state["nav_page"] = page
-
     filters: dict = {}
     collect_latest = False
+    collect_historical = False
     analyze_now = False
-    skip_filters = {
-        "Dashboard",
-        "Overview",
-        "Analyze",
-        "Metric Decomposition",
-        "Collection Runs",
-        "Review Explorer",
-        "Last 30 Days",
-        "30-Day Analysis",
-        "Data Collection",
-        "Live Collection",
-        "Opportunity Areas",
-        "AI Insights",
-        "Ask AI",
-        "Part 1 — AI Discovery Answers",
-        "Executive Discovery",
-        "AI Research Brief",
-    }
-    if page not in skip_filters:
+    if page == "Customer Insights" and not analysis.empty:
         with st.expander("Filters", expanded=False):
-            if not analysis.empty:
-                f1, f2, f3 = st.columns(3)
-                with f1:
-                    filters["source"] = st.multiselect("Source", sorted(analysis["source"].dropna().unique().tolist()))
-                    filters["segment"] = st.multiselect(
-                        "Segment", sorted(analysis["user_segment"].dropna().unique().tolist())
-                    )
-                with f2:
-                    filters["category"] = st.multiselect(
-                        "Category", sorted(analysis["fashion_category"].dropna().unique().tolist())
-                    )
-                    filters["intent"] = st.multiselect(
-                        "Intent", sorted(analysis["purchase_intent"].dropna().unique().tolist())
-                    )
-                with f3:
-                    filters["status"] = st.multiselect(
-                        "Purchase status", sorted(analysis["purchase_status"].dropna().unique().tolist())
-                    )
-                    filters["blocker"] = st.multiselect(
-                        "Blocker", sorted(analysis["purchase_blocker"].dropna().unique().tolist())
-                    )
-                ts = pd.to_datetime(analysis.get("published_at", analysis.get("timestamp")), utc=True, errors="coerce").dropna()
-                if not ts.empty:
-                    dmin, dmax = ts.min().date(), ts.max().date()
-                    filters["date_range"] = st.date_input("Date range", value=(dmin, dmax))
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                filters["source"] = st.multiselect("Source", sorted(analysis["source"].dropna().unique().tolist()))
+                filters["segment"] = st.multiselect(
+                    "Segment", sorted(analysis["user_segment"].dropna().unique().tolist())
+                )
+            with f2:
+                filters["category"] = st.multiselect(
+                    "Category", sorted(analysis["fashion_category"].dropna().unique().tolist())
+                )
+                filters["intent"] = st.multiselect(
+                    "Intent", sorted(analysis["purchase_intent"].dropna().unique().tolist())
+                )
+            with f3:
+                filters["status"] = st.multiselect(
+                    "Purchase status", sorted(analysis["purchase_status"].dropna().unique().tolist())
+                )
+                filters["blocker"] = st.multiselect(
+                    "Blocker", sorted(analysis["purchase_blocker"].dropna().unique().tolist())
+                )
+            ts = pd.to_datetime(analysis.get("published_at", analysis.get("timestamp")), utc=True, errors="coerce").dropna()
+            if not ts.empty:
+                dmin, dmax = ts.min().date(), ts.max().date()
+                filters["date_range"] = st.date_input("Date range", value=(dmin, dmax))
 
     last_stats = st.session_state.get("last_collection_stats")
     if last_stats is None and run is not None:
@@ -605,13 +506,14 @@ def main() -> None:
                 for item in (getattr(run, "source_results", None) or [])
                 if item.get("status") in {"error", "unavailable"}
             ],
+            "source_coverage": list(getattr(run, "source_results", None) or []),
         }
     analysis_audit = st.session_state.get("last_analysis_stats") or {}
     if summary and isinstance(summary, dict) and summary.get("audit"):
         analysis_audit = {**analysis_audit, **summary["audit"]}
     interval_note = (
         "Automatic collection is not a background daemon on Streamlit. "
-        "Use Collect Latest Reviews, keep the dashboard open with a visit interval, "
+        "Use Collect Latest Feedback, keep the dashboard open with a visit interval, "
         "or run `python -m scheduler.jobs` / the HTTP cron endpoint."
     )
     if interval_hours == 0:
@@ -624,38 +526,40 @@ def main() -> None:
 
     analyze_kwargs = {"window_days": 30, "window_months": None, "range_start": None, "range_end": None}
 
-    if page in {"Dashboard", "Overview"}:
-        actions = overview_page.render(
-            conversations_30,
-            analysis_30,
+    if page == "Data Collection Status":
+        actions = collection_page.render(
+            conversations_all,
+            analysis_all,
             health,
             last_collection=last_collection,
             last_ai=last_ai,
-            pending_ai=pending_ai,
-            failed_ai=failed_ai,
-            analyzed=analyzed,
             last_stats=last_stats,
-            window_days=30,
-            total_records=total_records,
-            play_count=play_count,
-            youtube_count=youtube_count,
-            reddit_count=reddit_count,
-            hist_label=f"Last {HISTORICAL_WINDOW_MONTHS} Months",
-            ai_provider_label=ai_provider_label,
+            interval_note=interval_note,
+            interval_hours=interval_hours,
+            hist_months=HISTORICAL_WINDOW_MONTHS,
+            gemini_configured=bool(gemini_key.strip()),
+            openrouter_configured=bool(api_key.strip()),
+            youtube_configured=youtube_configured,
+            apify_configured=apify_configured,
+            play_ready=True,
+            db_ready=True,
         ) or {}
         collect_latest = bool(actions.get("collect"))
+        collect_historical = bool(actions.get("collect_historical"))
         analyze_now = bool(actions.get("analyze"))
-    elif page == "Review Explorer":
-        reviews_page.render(conversations_hist, analysis_hist, window_days=int(hist_days))
-    elif page == "Analyze":
-        result = analyze_page.render(
+    elif page == "Customer Insights":
+        result = insights_page.render(
             conversations_hist,
             analysis_hist,
+            opportunities,
+            summary,
+            brief_md,
             last_collection=last_collection,
             last_ai=last_ai,
             last_stats=last_stats,
             audit=analysis_audit,
-        )
+            filters=filters,
+        ) or {}
         analyze_now = bool(result.get("analyze"))
         analyze_kwargs = {
             "window_days": int(result.get("window_days") or 30),
@@ -663,67 +567,30 @@ def main() -> None:
             "range_start": result.get("range_start"),
             "range_end": result.get("range_end"),
         }
-    elif page == "Last 30 Days":
-        last30_page.render(conversations_30, analysis_30)
-    elif page == "30-Day Analysis":
-        analyze_now = analysis30_page.render(
-            conversations_30,
-            analysis_30,
-            last_collection=last_collection,
-            last_ai=last_ai,
-            last_stats=last_stats,
-        )
-    elif page in {"Data Collection", "Live Collection"}:
-        actions = collection_page.render(
-            health,
-            last_collection=last_collection,
-            last_stats=last_stats,
-            interval_note=interval_note,
-            records_30=0 if conversations_30.empty else int(len(conversations_30)),
-        ) or {}
-        collect_latest = bool(actions.get("collect"))
-        analyze_now = bool(actions.get("analyze"))
-    elif page == "Opportunity Areas":
+    elif page == "Opportunity Explorer":
         opportunities_page.render(conversations_30, analysis_30, opportunities)
-    elif page == "Metric Decomposition":
-        metric_decomp_page.render(conversations_30, analysis_30, window_days=30)
-    elif page == "Collection Runs":
-        with session_scope() as session:
-            collection_runs_page.render(session)
-    elif page == "AI Insights":
-        insights_page.render(conversations, analysis, opportunities, summary, brief_md)
-    elif page == "Ask AI":
+    elif page == "Feedback Explorer":
+        reviews_page.render(conversations_all, analysis_all, window_days=int(hist_days))
+    elif page == "AI Product Manager Chatbot":
         ask_page.render(
-            conversations_30,
-            analysis_30,
+            conversations_hist,
+            analysis_hist,
             api_key=api_key,
             model=model,
-            window_days=30,
+            window_days=int(hist_days),
             provider=provider,
             gemini_key=gemini_key,
         )
-    elif page == "Part 1 — AI Discovery Answers":
-        part1_page.render(analysis, opportunities)
-    elif page == "Executive Discovery":
-        executive_page.render(conversations, analysis, opportunities, summary)
-    elif page == "Problem Landscape":
-        problems_page.render(analysis, opportunities, filters)
-    elif page == "Wishlist Behavior":
-        wishlist_page.render(analysis, filters)
-    elif page == "Purchase Blockers":
-        blockers_page.render(analysis, filters)
-    elif page == "Uncertainty Map":
-        uncertainty_page.render(analysis, filters)
-    elif page == "Comparison Behavior":
-        comparison_page.render(analysis, filters)
-    elif page == "External Information Seeking":
-        workarounds_page.render(analysis, filters)
-    elif page == "Evidence Explorer":
-        evidence_page.render(analysis, themes, filters)
-    elif page == "Segment Explorer":
-        segments_page.render(analysis, opportunities, filters)
-    elif page == "AI Research Brief":
-        brief_page.render(brief_md)
+    elif page == "Settings":
+        settings_page.render(
+            default_openrouter_model=default_model,
+            default_gemini_model=default_gemini_model,
+            youtube_configured=youtube_configured,
+            apify_configured=apify_configured,
+            reddit_oauth=reddit_oauth,
+            openrouter_configured=bool(api_key.strip()),
+            gemini_configured=bool(gemini_key.strip()),
+        )
 
     if collect_latest:
         bar = st.progress(0.0, text="Collecting latest public records…")
@@ -744,7 +611,28 @@ def main() -> None:
             st.rerun()
         except Exception as exc:
             logger.exception("Collect Latest Reviews failed")
-            st.error(f"Collect Latest Reviews failed: {exc}")
+            st.error(f"Collect Latest Feedback failed: {exc}")
+
+    if collect_historical:
+        bar = st.progress(0.0, text="Collecting historical public records…")
+        try:
+            _run_collection(
+                enabled=enabled,
+                max_records=int(max_records),
+                model=model,
+                temperature=temperature,
+                api_key=api_key,
+                window_days=int(hist_days),
+                full_refresh=True,
+                extra_queries=extra_queries,
+                progress_bar=bar,
+                provider=provider,
+                gemini_key=gemini_key,
+            )
+            st.rerun()
+        except Exception as exc:
+            logger.exception("Collect Historical Feedback failed")
+            st.error(f"Collect Historical Feedback failed: {exc}")
 
     if analyze_now:
         bar = st.progress(0.0, text="Analyzing stored records…")

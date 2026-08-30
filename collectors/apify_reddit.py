@@ -18,7 +18,12 @@ from typing import Any
 import requests
 
 from collectors.base import SourceAdapter
-from config import APIFY_REDDIT_QUERIES, DEFAULT_APIFY_REDDIT_SUBREDDITS, REQUEST_TIMEOUT_SECONDS
+from config import (
+    APIFY_REDDIT_QUERIES,
+    DEFAULT_APIFY_REDDIT_ACTOR_ID,
+    DEFAULT_APIFY_REDDIT_SUBREDDITS,
+    REQUEST_TIMEOUT_SECONDS,
+)
 from processing.cleaning import is_valid_conversation, normalize_record, parse_timestamp
 from processing.dates import is_after
 
@@ -59,7 +64,10 @@ class ApifyRedditCollector(SourceAdapter):
         subreddits = kwargs.pop("subreddits", None)
         super().__init__(**kwargs)
         self.api_token = str(api_token if api_token is not None else os.getenv("APIFY_API_TOKEN", "")).strip()
-        self.actor_id = str(actor_id if actor_id is not None else os.getenv("APIFY_REDDIT_ACTOR_ID", "")).strip()
+        if actor_id is not None:
+            self.actor_id = str(actor_id).strip()
+        else:
+            self.actor_id = os.getenv("APIFY_REDDIT_ACTOR_ID", DEFAULT_APIFY_REDDIT_ACTOR_ID).strip() or DEFAULT_APIFY_REDDIT_ACTOR_ID
         self.subreddits = list(subreddits) if subreddits is not None else configured_subreddits()
         self.queries = list(self.queries) or list(APIFY_REDDIT_QUERIES)
         self.poll_seconds = float(os.getenv("APIFY_POLL_SECONDS", "5"))

@@ -12,7 +12,49 @@ SOURCE_LABELS = [
     ("web", "Web/Fashion Communities"),
     ("reddit", "Reddit"),
     ("youtube", "YouTube"),
+    ("manual", "Manual Upload"),
 ]
+
+# UI labels requested by the product dashboard (DB keys stay unchanged).
+DISPLAY_SOURCE = {
+    "google_play": "Google Play",
+    "youtube": "YouTube",
+    "reddit": "Reddit",
+    "apify_reddit": "Reddit",
+    "app_store": "Apple App Store",
+    "web": "Web",
+    "manual": "Manual Upload",
+}
+
+PURCHASE_WISHLIST = {
+    "explicit_wishlist",
+    "comparison_shortlist",
+    "occasion_planning",
+}
+BOOKMARK_WISHLIST = {
+    "save_for_later",
+    "cart_as_bookmark",
+    "price_watch",
+    "browsing_only",
+}
+
+
+def display_source(source: object) -> str:
+    key = str(source or "").strip()
+    if not key:
+        return "Unknown"
+    return DISPLAY_SOURCE.get(key, key)
+
+
+def wishlist_intent_label(behavior: object) -> str:
+    value = str(behavior or "").strip()
+    if not value or value.lower() in {"unknown", "unclear", "nan", "none"}:
+        return "not analyzed"
+    if value in PURCHASE_WISHLIST:
+        return "purchase intent"
+    if value in BOOKMARK_WISHLIST:
+        return "bookmarking"
+    return value
 
 
 ANALYSIS_COLS = [
@@ -67,6 +109,52 @@ def build_review_records(conversations: pd.DataFrame, analysis: pd.DataFrame) ->
     return merged
 
 
+def corpus_stats(conversations: pd.DataFrame) -> dict:
+    """Counts and date span from stored rows only. Never invents values."""
+    empty = {
+        "total": 0,
+        "google_play": 0,
+        "youtube": 0,
+        "reddit": 0,
+        "manual": 0,
+        "sources_active": 0,
+        "earliest": None,
+        "latest": None,
+        "average_rating": None,
+        "rated_count": 0,
+    }
+    if conversations is None or conversations.empty:
+        return empty
+    src = conversations["source"].fillna("") if "source" in conversations.columns else pd.Series([], dtype=str)
+    play = int((src == "google_play").sum())
+    youtube = int((src == "youtube").sum())
+    reddit = int(src.isin(["reddit", "apify_reddit"]).sum())
+    manual = int((src == "manual").sum())
+    active = int(src[src.astype(str).str.strip() != ""].nunique()) if len(src) else 0
+    ts = pd.to_datetime(conversations.get("published_at"), utc=True, errors="coerce")
+    earliest = ts.min() if ts.notna().any() else None
+    latest = ts.max() if ts.notna().any() else None
+    rated_count = 0
+    average_rating = None
+    if "rating" in conversations.columns:
+        ratings = pd.to_numeric(conversations["rating"], errors="coerce").dropna()
+        rated_count = int(len(ratings))
+        if rated_count:
+            average_rating = round(float(ratings.mean()), 2)
+    return {
+        "total": int(len(conversations)),
+        "google_play": play,
+        "youtube": youtube,
+        "reddit": reddit,
+        "manual": manual,
+        "sources_active": active,
+        "earliest": earliest,
+        "latest": latest,
+        "average_rating": average_rating,
+        "rated_count": rated_count,
+    }
+
+
 def source_summary(conversations: pd.DataFrame) -> pd.DataFrame:
     """Counts and last publication time from the real collected corpus only."""
     labels = SOURCE_LABELS
@@ -114,6 +202,7 @@ def filter_review_records(
     language: list[str] | None = None,
     segment: list[str] | None = None,
     keyword: str = "",
+    wishlist_intent: list[str] | None = None,
 ) -> pd.DataFrame:
     if records.empty:
         return records
@@ -140,6 +229,8 @@ def filter_review_records(
         today = now.date()
         out = out[ts.dt.date == today]
         ts = pd.to_datetime(out.get("published_at"), utc=True, errors="coerce")
+    elif preset in {"all_collected", "all"}:
+        pass
     if source:
         out = out[out["source"].isin(source)]
     if sentiment and "sentiment" in out.columns:
@@ -177,6 +268,10 @@ def filter_review_records(
             + out.get("purchase_blocker", pd.Series("", index=out.index)).fillna("").astype(str)
         ).str.lower()
         out = out[blob.str.contains(needle, regex=False)]
+    if wishlist_intent and "wishlist_behavior" in out.columns:
+        wanted = {str(x) for x in wishlist_intent}
+        labels = out["wishlist_behavior"].map(wishlist_intent_label)
+        out = out[labels.isin(wanted) | out["wishlist_behavior"].isin(wanted)]
     if keyword and str(keyword).strip():
         needle = str(keyword).strip().lower()
         blob = (

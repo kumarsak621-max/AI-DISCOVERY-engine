@@ -14,8 +14,8 @@ PAGE_SIZE = 20
 
 
 def render(conversations: pd.DataFrame, analysis: pd.DataFrame, window_days: int) -> None:
-    st.subheader("Review Explorer")
-    st.markdown("These are **real collected public records**, not demo or synthetic reviews.")
+    st.subheader("Feedback Explorer")
+    st.markdown("Browse the real collected dataset. These are **public records**, not demo or synthetic reviews.")
     st.caption(analysis_period_label(int(window_days)))
 
     records = build_review_records(conversations, analysis)
@@ -38,8 +38,9 @@ def render(conversations: pd.DataFrame, analysis: pd.DataFrame, window_days: int
     with c1:
         preset = st.selectbox(
             "Date preset",
-            ["last_30_days", "last_6_months", "last_12_months", "last_30_months", "today"],
+            ["all_collected", "last_30_days", "last_6_months", "last_12_months", "last_30_months", "today"],
             format_func=lambda x: {
+                "all_collected": "All collected",
                 "last_30_days": "Last 30 Days",
                 "last_6_months": "Last 6 Months",
                 "last_12_months": "Last 12 Months",
@@ -62,6 +63,7 @@ def render(conversations: pd.DataFrame, analysis: pd.DataFrame, window_days: int
     with c4:
         intents = sorted(records["purchase_intent"].dropna().unique().tolist()) if "purchase_intent" in records.columns else []
         intent = st.multiselect("Purchase intent", [s for s in intents if s])
+        wish_intents = st.multiselect("Wishlist intent", ["purchase intent", "bookmarking", "not analyzed"])
 
     c5, c6, c7, c8 = st.columns(4)
     with c5:
@@ -98,6 +100,7 @@ def render(conversations: pd.DataFrame, analysis: pd.DataFrame, window_days: int
         language=language or None,
         segment=segment or None,
         keyword=keyword,
+        wishlist_intent=wish_intents or None,
     )
     st.metric("Matching real records", int(len(view)))
     if view.empty:

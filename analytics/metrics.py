@@ -482,9 +482,6 @@ def source_health_rows(session: Session, openrouter_configured: bool | None = No
             if not os.getenv("APIFY_API_TOKEN", "").strip() and status in {"unknown", ""}:
                 status = "not configured"
                 last_error = last_error or "Apify API token is not configured."
-            elif not os.getenv("APIFY_REDDIT_ACTOR_ID", "").strip() and status in {"unknown", "", "not configured"}:
-                status = "not configured"
-                last_error = last_error or "Apify Reddit Actor is not configured."
         else:
             label = name
         rows.append(

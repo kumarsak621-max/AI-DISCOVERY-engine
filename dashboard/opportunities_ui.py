@@ -10,7 +10,8 @@ import streamlit as st
 from analytics.metrics import kpi_counts
 from analytics.opportunities import multiplicative_framework_score
 from config import OPPORTUNITY_WEIGHTS
-from dashboard.ui import empty_state
+from dashboard import metric_decomp as metric_decomp_page
+from dashboard.ui import empty_state, section_label
 
 
 def render(
@@ -126,3 +127,22 @@ This is an evidence-based prioritization framework, **not proof of causality**.
                 st.markdown(f"- “{item.get('quote')}” — `{item.get('source')}` {link}")
         else:
             st.caption("No grounded quotes stored for this opportunity.")
+
+    section_label("Metric Impact")
+    st.markdown(
+        """
+<div class="funnel-step">Wishlist Added</div>
+<div class="funnel-arrow">↓ Product Interest</div>
+<div class="funnel-step">Purchase Intent</div>
+<div class="funnel-arrow">↓ Uncertainty Resolution</div>
+<div class="funnel-step">Purchase Decision</div>
+<div class="funnel-arrow">↓</div>
+<div class="funnel-step">Wishlist Purchase Within 30 Days</div>
+""",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Stages below are a research framework. Wording is **potential driver** / **observed barrier** / "
+        "**evidence suggests** — not a causal conversion claim."
+    )
+    metric_decomp_page.render(conversations, analysis, window_days=30)

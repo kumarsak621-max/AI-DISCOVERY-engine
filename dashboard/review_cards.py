@@ -5,17 +5,18 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from analytics.records import display_source, wishlist_intent_label
+
 
 def render_review_card(row: pd.Series) -> None:
     title = str(row.get("title") or "")[:80]
     snippet = str(row.get("original_text") or row.get("text") or "")[:120]
-    source = str(row.get("source") or "unknown")
+    source = display_source(row.get("source"))
     pub = row.get("published_at") or "unknown publication date"
     header = f"{source} · {pub} — {title or snippet}"
     with st.expander(header, expanded=False):
         st.caption("REAL collected public record — not synthetic.")
-        source_type = str(row.get("source_type") or source)
-        st.markdown(f"**Source / platform:** `{source_type}` (`{source}`)")
+        st.markdown(f"**Source / platform:** {source} (`{row.get('source') or 'unknown'}`)")
         st.markdown(f"**Publication date/time:** {pub}")
         st.markdown(f"**Collected at:** {row.get('collected_at') or '—'}")
         rating = row.get("rating")
@@ -52,6 +53,7 @@ def render_review_card(row: pd.Series) -> None:
         st.markdown(f"**Sentiment:** {row.get('sentiment') or 'not analyzed yet'}")
         st.markdown(f"**Detected theme / pain point:** {row.get('primary_problem') or row.get('uncertainty_type') or '—'}")
         st.markdown(f"**Purchase intent:** {row.get('purchase_intent') or 'not analyzed yet'}")
+        st.markdown(f"**Wishlist intent:** {wishlist_intent_label(row.get('wishlist_behavior'))}")
         st.markdown(f"**Wishlist behavior:** {row.get('wishlist_behavior') or '—'}")
         st.markdown(f"**User segment:** {row.get('user_segment') or 'not analyzed yet'}")
         st.markdown(f"**Analysis status:** {row.get('analysis_status') or '—'}")

@@ -61,6 +61,8 @@ def records_to_evidence(retrieved: pd.DataFrame) -> list[dict[str, Any]]:
                 "intent": str(row.get("purchase_intent") or ""),
                 "problem": str(row.get("primary_problem") or ""),
                 "text": original,
+                "video": str(row.get("video_title") or ""),
+                "rating": row.get("rating"),
             }
         )
     return items
